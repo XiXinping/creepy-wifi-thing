@@ -1,68 +1,64 @@
-//! **Station** — associate to an access point and measure the link.
+//! **ESP-NOW simplex** — the asymmetric exchange, and the highest CSI rate the crate offers.
 //!
-//! | Attribute | Value |
-//! |---|---|
-//! | Mode | Wi-Fi station |
-//! | Session role | `SESSION_ROLE` below — `Some(Initiator)` or `None` |
-//! | Sensing role | transmitter-receiver when it drives the traffic, otherwise receiver |
-//! | Reporting | `REPORTING` below — `Report`, `None`, `ThresholdBased` or `Decimate` |
+//! | Attribute | `END = Source` | `END = Peer` |
+//! |---|---|---|
+//! | Mode | ESP-NOW simplex | ESP-NOW simplex |
+//! | Session role | **Initiator** — it originates the flood | **Responder** |
+//! | Sensing role | **Transmitter** — it owns all transmit airtime | **Receiver** |
+//! | Reporting | **None** — it measures nothing | **Report** (to the host) |
 //!
-//! The run's controller is whatever calls `run()`; it is never the initiator.
+//! None of these is settable: the asymmetry fixes them all. The source floods, the peer measures.
+//! Leaving the channel to a single transmitter is exactly why this sustains a markedly higher
+//! sample rate than the symmetric `esp_now` pairing.
 //!
-//! A station is the session's **initiator** when the uplink it generates is the traffic being
-//! measured — the usual case here, where it pings its gateway at `PING_RATE_HZ` so the AP has
-//! something to measure. It has **no session role** when it only measures an already-busy link
-//! and drives nothing itself; set `SESSION_ROLE` to `None` and drop the ping rate to `None`.
+//! How the link forms: the **peer** broadcasts a sparse (~1 Hz) discovery beacon until it hears a
+//! source; the source learns its MAC, registers it as a unicast peer with a forced PHY, sends one
+//! hello so the peer stops beaconing, and then unicasts continuously. After that the peer is purely
+//! receive-only.
 //!
-//! Associates to an ESP softAP (`access_point`) or to any commercial router. On the dual-band
-//! ESP32-C5, `with_channel_hint` pins the band before the scan — without it the node scans both,
-//! which is slower but finds an AP on either.
-//!
-//! Build / run (pair with `access_point` on the same SSID):
-//!   cargo esp32c6 --example station
+//! Build / run (both ends on the same channel, `END` flipped between them):
+//!   cargo esp32c6 --example esp_now_simplex
 
 #![no_std]
 #![no_main]
 
 use defmt::println;
-use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_csi_rs::csi::CsiPacket;
 use esp_csi_rs::logging::logging::{LogMode, init_logger};
 use esp_csi_rs::{
-    CsiConfig, CsiNode, MeasurementSetup, NodeHardware, Reporting, SessionRole, WifiStationConfig,
-    log_ln, set_csi_callback,
+    CsiConfig, CsiNode, CsiNodeClient, EspNowConfig, MeasurementSetup, NodeHardware,
+    install_static_espnow_recv, set_csi_callback,
 };
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
-use esp_radio::wifi::sta::StationConfig;
-use esp_radio::wifi::{AuthenticationMethodConfig, Password, PowerSaveMode, WifiController};
+use esp_radio::esp_now::WifiPhyRate;
+use esp_radio::wifi::WifiController;
 use portable_atomic::{AtomicI32, AtomicU32, Ordering};
-use {esp_backtrace as _, esp_println as _};
+use {defmt_rtt as _, esp_backtrace as _};
 
 extern crate alloc;
 
 // ── Knobs ───────────────────────────────────────────────────────────────────────────────────────
 
-/// Must match `access_point` (or your own AP).
-const SSID: &str = "creepywifithing";
-const PASSWORD: &str = "birdsarenotreal";
+#[allow(dead_code)]
+#[derive(PartialEq, Eq)]
+enum End {
+    /// Floods: initiator, sensing transmitter, reports nothing.
+    Source,
+    /// Measures: responder, sensing receiver, reports everything.
+    Peer,
+}
 
-/// `Some(Initiator)` if this node's uplink is the traffic being measured; `None` if it only
-/// measures a link someone else keeps busy.
-const SESSION_ROLE: Option<SessionRole> = Some(SessionRole::Initiator);
+/// Flash the same binary to both boards, changing only this.
+const END: End = End::Peer;
 
-/// `Reporting::None` keeps the link busy without reporting anything — useful when the AP is the
-/// node that reports and you want this node's delivery cost out of the measurement.
-const REPORTING: Reporting = Reporting::HOST;
+/// Both ends must agree.
+const CHANNEL: u8 = 6;
 
-/// Gateway ping rate (Hz): the measurement periodicity, the uplink a reporting AP measures. Set
-/// `None` for a passive station that generates no traffic of its own.
-const PING_RATE_HZ: Option<u16> = Some(4000);
-
-/// Pin the radio band from the AP's primary channel (ESP32-C5 dual-band only).
-const CHANNEL_HINT: Option<u8> = None;
+/// Forced TX PHY for the flood. Source only — the peer has no rate to force.
+const PHY_RATE: WifiPhyRate = WifiPhyRate::RateMcs7Lgi;
 
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -81,13 +77,17 @@ fn on_csi(packet: &CsiPacket) {
 
 #[embassy_executor::task]
 async fn stats_task() {
+    let mut previous = 0u32;
     loop {
         Timer::after_secs(1).await;
-        log_ln!(
-            "CSI Packets: {}, Latest RSSI: {}",
-            CSI_PKT_COUNT.load(Ordering::Relaxed),
+        let total = CSI_PKT_COUNT.load(Ordering::Relaxed);
+        println!(
+            "CSI {}/s, total {}, RSSI {}",
+            total.wrapping_sub(previous),
+            total,
             LATEST_RSSI.load(Ordering::Relaxed),
         );
+        previous = total;
     }
 }
 
@@ -105,38 +105,51 @@ async fn main(spawner: Spawner) -> ! {
     let config_radio = esp_radio::wifi::ControllerConfig::default();
     let wifi_controller = esp_radio::wifi::WifiController::new(peripherals.WIFI, config_radio)
         .expect("Failed to initialize Wi-Fi controller");
+
+    install_static_espnow_recv();
     let controller = WIFI_CONTROLLER.init(wifi_controller);
-    let _ = controller.set_power_saving(PowerSaveMode::None);
 
-    let client_config = StationConfig::default()
-        .with_ssid(SSID.try_into().expect("SSID longer than 32 bytes"))
-        .with_authentication(AuthenticationMethodConfig::WpaWpa2Personal(
-            Password::try_from(PASSWORD).unwrap(),
-        ));
-
-    let mut station_config = WifiStationConfig::new(client_config)
-        .session(SESSION_ROLE)
-        .reporting(REPORTING);
-    if let Some(channel) = CHANNEL_HINT {
-        station_config = station_config.with_channel_hint(channel);
-    }
-
-    println!("Starting station on SSID {}", SSID);
-
+    let mut node_handle = CsiNodeClient::new();
     let csi_hardware = NodeHardware::new(controller);
-    let mut setup = MeasurementSetup::new().acquisition(CsiConfig::default());
-    if let Some(hz) = PING_RATE_HZ {
-        setup = setup.periodicity_hz(hz);
-    }
-    let mut node = CsiNode::station(station_config, setup, csi_hardware);
+
+    let mut node = match END {
+        End::Source => {
+            println!(
+                "Starting simplex source (initiator, transmitter) on channel {}",
+                CHANNEL
+            );
+            // No periodicity: the source floods as fast as the radio sends.
+            CsiNode::esp_now_simplex_source(
+                EspNowConfig::default()
+                    .with_channel(CHANNEL)
+                    .with_phy_rate(PHY_RATE),
+                MeasurementSetup::new(),
+                csi_hardware,
+            )
+        }
+        End::Peer => {
+            println!(
+                "Starting simplex peer (responder, receiver) on channel {}",
+                CHANNEL
+            );
+            CsiNode::esp_now_simplex_peer(
+                CHANNEL,
+                MeasurementSetup::new().acquisition(CsiConfig::default()),
+                csi_hardware,
+            )
+        }
+    };
     node.set_protocol(esp_radio::wifi::Protocol::N);
 
-    set_csi_callback(on_csi);
-    spawner.spawn(stats_task().unwrap());
+    if END == End::Peer {
+        set_csi_callback(on_csi);
+        spawner.spawn(stats_task().unwrap());
+    }
+    let _ = &mut node_handle;
     node.run().await;
 
     loop {
-        println!("Station stopped");
+        println!("Simplex node stopped");
         Timer::after(Duration::from_secs(5)).await;
     }
 }
