@@ -25,6 +25,7 @@
 use defmt::println;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use esp_backtrace as _;
 use esp_csi_rs::csi::CsiPacket;
 use esp_csi_rs::logging::logging::{LogMode, init_logger};
 use esp_csi_rs::{
@@ -33,10 +34,10 @@ use esp_csi_rs::{
 };
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
+use esp_println as _;
 use esp_radio::esp_now::WifiPhyRate;
 use esp_radio::wifi::WifiController;
 use portable_atomic::{AtomicI32, AtomicU32, Ordering};
-use {defmt_rtt as _, esp_backtrace as _};
 
 extern crate alloc;
 
@@ -95,7 +96,8 @@ async fn stats_task() {
 async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    init_logger(spawner, LogMode::Text);
+    defmt::info!("Hello, world!");
+    init_logger(spawner, LogMode::EspCsiTool);
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 61440);
 

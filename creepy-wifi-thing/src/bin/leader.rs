@@ -25,6 +25,7 @@
 use defmt::println;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use esp_backtrace as _;
 use esp_csi_rs::csi::CsiPacket;
 use esp_csi_rs::logging::logging::{LogMode, init_logger};
 use esp_csi_rs::{
@@ -36,7 +37,6 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_radio::esp_now::WifiPhyRate;
 use esp_radio::wifi::WifiController;
 use portable_atomic::{AtomicI32, AtomicU32, Ordering};
-use {defmt_rtt as _, esp_backtrace as _};
 
 extern crate alloc;
 
