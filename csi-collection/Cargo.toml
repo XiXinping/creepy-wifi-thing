@@ -1,0 +1,93 @@
+[package]
+edition      = "2024"
+name         = "csi-collection"
+rust-version = "1.95"
+version      = "0.1.0"
+
+[[bin]]
+name = "emitter"
+path = "./src/bin/emitter.rs"
+test = false
+
+[[bin]]
+name = "sniffer"
+path = "./src/bin/sniffer.rs"
+test = false
+
+[[test]]
+harness = false
+name    = "hello_test"
+
+[lib]
+test = false
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["esp32c6", "unstable"] }
+
+esp-rtos = { version = "0.4.0", features = [
+  "embassy",
+  "esp-alloc",
+  "esp-radio",
+  "esp32c6",
+] }
+
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6"] }
+
+embassy-net = { version = "0.9.1", features = [
+  "dhcpv4",
+  "medium-ethernet",
+  "tcp",
+  "udp",
+] }
+embedded-io = "0.7.1"
+embedded-io-async = "0.7.0"
+esp-alloc = { version = "0.11.0", features = ["esp32c6"] }
+rtt-target = "0.6.2"
+# for more networking protocol support see https://crates.io/crates/edge-net
+embassy-executor = { version = "0.10.0", features = [] }
+embassy-time = "0.5.0"
+esp-radio = { version = "1.0.0-beta.1", features = [
+  "esp-alloc",
+  "esp32c6",
+  "unstable",
+  "wifi",
+] }
+smoltcp = { version = "0.14.0", default-features = false, features = [
+  "medium-ethernet",
+  "multicast",
+  "proto-dhcpv4",
+  "proto-dns",
+  "proto-ipv4",
+  "socket-dns",
+  "socket-icmp",
+  "socket-raw",
+  "socket-tcp",
+  "socket-udp",
+] }
+
+critical-section = "1.2.0"
+static_cell      = "2.1.1"
+esp-csi-rs = { version = "0.13.0", features = ["async-print", "esp32c6"] }
+esp-println = "0.18.0"
+esp-backtrace = "0.20.0"
+heapless = "0.9.4"
+embassy-sync = "0.8.0"
+embassy-futures = "0.1.2"
+
+[dev-dependencies]
+embedded-test = { version = "0.7.1", features = [
+  "embassy-010",
+  "external-executor",
+] }
+
+# For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
+[profile.dev]
+# The default debug profile is too slow and too big for resource-constrained devices.
+# Always build with some optimizations enabled.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1     # LLVM can perform better optimizations using a single thread
+debug         = 2     # prefer slower builds but better debugging experience
+lto           = 'fat'
+opt-level     = 's'

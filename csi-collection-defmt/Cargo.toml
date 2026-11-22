@@ -1,0 +1,141 @@
+[package]
+edition      = "2024"
+name         = "csi-collection"
+rust-version = "1.95"
+version      = "0.1.0"
+
+
+[[bin]]
+name = "leader"
+path = "src/bin/leader.rs"
+test = false
+
+[[bin]]
+name = "follower"
+path = "src/bin/follower.rs"
+
+[[bin]]
+name = "emitter"
+path = "src/bin/emitter.rs"
+test = false
+
+[[bin]]
+name = "sniffer"
+path = "src/bin/sniffer.rs"
+
+
+[[test]]
+harness = false
+name    = "hello_test"
+
+[lib]
+test = false
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["defmt", "esp32c6", "unstable"] }
+
+esp-rtos = { version = "0.4.0", features = [
+  "defmt",
+  "embassy",
+  "esp-alloc",
+  "esp-radio",
+  "esp32c6",
+] }
+
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["defmt", "esp32c6"] }
+
+embassy-net = { version = "0.9.1", features = [
+  "defmt",
+  "dhcpv4",
+  "medium-ethernet",
+  "tcp",
+  "udp",
+] }
+embedded-io = { version = "0.7.1", features = ["defmt"] }
+embedded-io-async = { version = "0.7.0", features = ["defmt"] }
+esp-alloc = { version = "0.11.0", features = ["defmt", "esp32c6"] }
+
+# RTT transport + the defmt global_logger probe-rs reads.
+rtt-target = { version = "0.6.2", features = ["defmt"] }
+
+# for more networking protocol support see https://crates.io/crates/edge-net
+bt-hci = "0.9.0"
+embassy-executor = { version = "0.10.0", features = ["defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt"] }
+esp-radio = { version = "1.0.0-beta.1", features = [
+  "ble",
+  "coex",
+  "defmt",
+  "esp-alloc",
+  "esp32c6",
+  "unstable",
+  "wifi",
+] }
+smoltcp = { version = "0.14.0", default-features = false, features = [
+  "defmt",
+  "medium-ethernet",
+  "multicast",
+  "proto-dhcpv4",
+  "proto-dns",
+  "proto-ipv4",
+  "socket-dns",
+  "socket-icmp",
+  "socket-raw",
+  "socket-tcp",
+  "socket-udp",
+] }
+trouble-host = { version = "0.7.0", features = ["gatt"] }
+
+critical-section = "1.2.0"
+static_cell      = "2.1.1"
+
+esp-csi-rs = { version = "0.13.0", default-features = false, features = [
+  "esp32c6",
+  "no-std",
+  "defmt",
+  "external-defmt-logger",  # ← critical: rtt-target owns the global logger, not esp-csi-rs
+  "jtag-serial",
+  # NOTE: do NOT add "println", "auto", "jtag-serial", "uart", or "async-print"
+  # here — those route the crate's console onto the USB-Serial-JTAG/espflash
+  # stream and conflict with the RTT logger.
+] }
+
+portable-atomic = "1.15.0"
+
+esp-backtrace = { version = "0.20.0", default-features = false, features = [
+  "defmt",
+  "esp32c6",
+  "panic-handler",  # esp-csi-rs hard-depends on esp-backtrace/panic-handler,
+                    # so keep it here; do NOT add panic-rtt-target (double panic handler).
+                    # Panic messages ride defmt → RTT, which is what you want anyway.
+] }
+
+heapless = "0.9.3"
+embassy-sync = "0.8.0"
+embassy-futures = "0.1.2"
+defmt = "1.2.0"          # direct dep: log_ln! expands to defmt::println! at YOUR call site
+
+# REMOVED: esp-println — with external-defmt-logger nothing in the console path
+# uses it (esp-csi-rs's chip feature still pulls the peripheral code in
+# transitively, but you should not depend on it or call println!/println from
+# esp-println; anything you print must go through defmt or all frames desync).
+# esp-println = "0.18.0"
+
+[dev-dependencies]
+embedded-test = { version = "0.7.1", features = [
+  "defmt",
+  "embassy-010",
+  "external-executor",
+] }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.dev.package."*"]
+opt-level = "s"          # optional; deps sit on the CSI hot path
+
+[profile.release]
+codegen-units = 1
+debug         = 2
+lto           = 'fat'
+opt-level     = 's'

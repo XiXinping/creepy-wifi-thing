@@ -22,7 +22,6 @@
 #![no_std]
 #![no_main]
 
-use defmt::println;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
@@ -30,7 +29,7 @@ use esp_csi_rs::csi::CsiPacket;
 use esp_csi_rs::logging::logging::{LogMode, init_logger};
 use esp_csi_rs::{
     CsiConfig, CsiNode, CsiNodeClient, EspNowConfig, MeasurementSetup, NodeHardware,
-    install_static_espnow_recv, set_csi_callback,
+    install_static_espnow_recv, log_ln, set_csi_callback,
 };
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
@@ -82,7 +81,7 @@ async fn stats_task() {
     loop {
         Timer::after_secs(1).await;
         let total = CSI_PKT_COUNT.load(Ordering::Relaxed);
-        println!(
+        log_ln!(
             "CSI {}/s, total {}, RSSI {}",
             total.wrapping_sub(previous),
             total,
@@ -96,7 +95,7 @@ async fn stats_task() {
 async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    defmt::info!("Hello, world!");
+    log_ln!("Hello, world!");
     init_logger(spawner, LogMode::EspCsiTool);
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 61440);
@@ -116,7 +115,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut node = match END {
         End::Source => {
-            println!(
+            log_ln!(
                 "Starting simplex source (initiator, transmitter) on channel {}",
                 CHANNEL
             );
@@ -130,7 +129,7 @@ async fn main(spawner: Spawner) -> ! {
             )
         }
         End::Peer => {
-            println!(
+            log_ln!(
                 "Starting simplex peer (responder, receiver) on channel {}",
                 CHANNEL
             );
@@ -151,7 +150,7 @@ async fn main(spawner: Spawner) -> ! {
     node.run().await;
 
     loop {
-        println!("Simplex node stopped");
+        log_ln!("Simplex node stopped");
         Timer::after(Duration::from_secs(5)).await;
     }
 }

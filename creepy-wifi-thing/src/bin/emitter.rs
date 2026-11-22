@@ -40,7 +40,6 @@
 #![no_std]
 #![no_main]
 
-use defmt::println;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use esp_csi_rs::logging::logging::{LogMode, init_logger};
@@ -107,7 +106,7 @@ async fn main(spawner: Spawner) -> ! {
         emitter = emitter.with_dst_mac(mac);
     }
 
-    println!(
+    log_ln!(
         "Starting emitter (sensing transmitter) — channel {}, {} ms period",
         CHANNEL,
         PERIOD.as_millis()
@@ -120,7 +119,7 @@ async fn main(spawner: Spawner) -> ! {
     node.run().await;
 
     loop {
-        println!("Emitter stopped after {} s", started.elapsed().as_secs());
+        log_ln!("Emitter stopped after {} s", started.elapsed().as_secs());
         Timer::after(Duration::from_secs(5)).await;
     }
 }

@@ -22,7 +22,6 @@
 #![no_std]
 #![no_main]
 
-use defmt::println;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
@@ -34,6 +33,7 @@ use esp_csi_rs::{
 };
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
+use esp_println::println;
 use esp_radio::esp_now::WifiPhyRate;
 use esp_radio::wifi::WifiController;
 use portable_atomic::{AtomicI32, AtomicU32, Ordering};
