@@ -67,6 +67,8 @@ const HE20: bool = false;
 /// How many distinct transmitters to track.
 const MAX_SOURCES: usize = 4;
 
+const EMITTER_MAC: Option<[u8; 6]> = Some([0x10, 0xBD, 0xA3, 0xAE, 0x7B, 0x04]);
+
 static WIFI_CONTROLLER: static_cell::StaticCell<WifiController<'static>> =
     static_cell::StaticCell::new();
 
@@ -101,33 +103,41 @@ static SOURCES: Mutex<
 > = Mutex::new(core::cell::RefCell::new(heapless::Vec::new()));
 
 fn on_csi(packet: &CsiPacket) {
-    // Two `i8` samples per subcarrier, so this is the width of the capture.
-    SUBCARRIERS.store(
-        packet.subcarriers() as u32,
-        core::sync::atomic::Ordering::Relaxed,
-    );
-    let ppdu = packet.meta().ppdu;
-    let mapped = match &packet.frame.payload {
-        CsiPayload::EspRaw { layout, .. } => layout.indices().count(),
-        _ => 0,
-    };
-    SOURCES.lock(|cell| {
-        let mut list = cell.borrow_mut();
-        if let Some(entry) = list.iter_mut().find(|e| e.mac == packet.mac()) {
-            entry.count += 1;
-            entry.rssi = packet.rssi() as i32;
-            entry.ppdu = ppdu;
-            entry.mapped = mapped;
-            return;
-        }
-        let _ = list.push(SourceTally {
-            mac: packet.mac(),
-            count: 1,
-            rssi: packet.rssi() as i32,
-            ppdu,
-            mapped,
-        });
-    });
+    if let Some(header) = packet.frame.header
+        && let Some(mac) = EMITTER_MAC
+        && header.addr2 != mac
+    {
+        return;
+    }
+    packet.clone().print_csi_w_metadata();
+    //println!("Received CSI packet!");
+    //// Two `i8` samples per subcarrier, so this is the width of the capture.
+    //SUBCARRIERS.store(
+    //    packet.subcarriers() as u32,
+    //    core::sync::atomic::Ordering::Relaxed,
+    //);
+    //let ppdu = packet.meta().ppdu;
+    //let mapped = match &packet.frame.payload {
+    //    CsiPayload::EspRaw { layout, .. } => layout.indices().count(),
+    //    _ => 0,
+    //};
+    //SOURCES.lock(|cell| {
+    //    let mut list = cell.borrow_mut();
+    //    if let Some(entry) = list.iter_mut().find(|e| e.mac == packet.mac()) {
+    //        entry.count += 1;
+    //        entry.rssi = packet.rssi() as i32;
+    //        entry.ppdu = ppdu;
+    //        entry.mapped = mapped;
+    //        return;
+    //    }
+    //    let _ = list.push(SourceTally {
+    //        mac: packet.mac(),
+    //        count: 1,
+    //        rssi: packet.rssi() as i32,
+    //        ppdu,
+    //        mapped,
+    //    });
+    //});
 }
 
 async fn report_task() {

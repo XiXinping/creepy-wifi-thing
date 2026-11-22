@@ -72,8 +72,8 @@ fn phy() -> EmitterPhy {
     PHY
 }
 
-/// Delay between injected frames. 20 ms is ~50 frames/s.
-const PERIOD: Duration = Duration::from_millis(20);
+/// Delay between injected frames. 1 ms is ~5000 frames/s.
+const PERIOD: Duration = Duration::from_millis(1);
 
 /// Address a specific receiver instead of broadcasting. Broadcast is the default; unicasting to
 /// one receiver tends to raise *that* receiver's CSI callback rate.
