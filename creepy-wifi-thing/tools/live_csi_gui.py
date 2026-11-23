@@ -5,6 +5,7 @@ import argparse
 from collections import deque
 import json
 import math
+from queue import Empty, Queue
 import re
 import sys
 import threading
@@ -18,6 +19,7 @@ import serial
 
 INDEX_HTML = Path(__file__).with_name("live_csi_gui.html")
 NUMBERS = re.compile(r"-?\d+")
+CHANNELS = set(range(1, 12)) | {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165}
 
 
 def decode_c5_12bit(raw):
@@ -65,14 +67,62 @@ class CsiState:
     def __init__(self, sample_format):
         self.lock = threading.Lock()
         self.sample_format = sample_format
+        self.channels = sorted(CHANNELS if sample_format == "c5-12bit" else set(range(1, 12)))
         self.status = "Connecting to board…"
         self.sources = {}
         self.total = 0
         self.history = deque(maxlen=2048)
+        self.access_points = {}
+        self.stations = {}
+        self.channel = None
+        self.channel_control = False
+        self.channel_error = None
+        self.connected = False
+        self.commands = Queue()
+
+    def observe(self, line):
+        parts = line.split(",")
+        with self.lock:
+            if len(parts) == 2 and parts[0] == "CHANNEL":
+                try:
+                    reported = int(parts[1])
+                except ValueError:
+                    return
+                self.channel_control = True
+                self.channel_error = None
+                if reported != self.channel:
+                    self.channel = reported
+                    self.sources.clear()
+                    self.history.clear()
+                    self.access_points.clear()
+                    self.stations.clear()
+                    self.status = f"Listening on channel {self.channel}"
+            elif len(parts) == 3 and parts[0] == "AP_INFO":
+                self.channel_control = True
+                try:
+                    ssid = bytes.fromhex(parts[2]).decode("utf-8", errors="replace")
+                except ValueError:
+                    return
+                self.access_points[parts[1].upper()] = "".join(c if c.isprintable() else "�" for c in ssid)
+            elif len(parts) == 3 and parts[0] == "STA_INFO":
+                self.stations[parts[1].upper()] = parts[2].upper()
+            elif parts[0] == "CHANNEL_ERROR":
+                self.channel_error = parts[1] if len(parts) > 1 else "unknown"
+
+    def request_channel(self, channel):
+        with self.lock:
+            if not self.connected or not self.channel_control:
+                return False
+            self.channel_error = None
+            self.status = f"Switching to channel {channel}…"
+        self.commands.put_nowait(channel)
+        return True
 
     def update(self, sample):
         now = time.monotonic()
         with self.lock:
+            if self.channel is None:
+                self.channel = sample["channel"]
             current = self.sources.get(sample["mac"])
             count = current["count"] + 1 if current else 1
             if current and now - current["rate_at"] < 1:
@@ -107,13 +157,20 @@ class CsiState:
                 self.history.popleft()
             return {
                 "status": self.status,
+                "channel": self.channel,
+                "channel_control": self.channel_control,
+                "channel_error": self.channel_error,
+                "channels": self.channels,
                 "format": self.sample_format,
                 "total": self.total,
                 "packets": [packet for packet in self.history if packet["seq"] > since],
                 "sources": [
                     {key: value for key, value in sample.items() if key not in ("rate_at", "rate_count", "seen_at")}
-                    | {"age": round(now - sample["seen_at"], 1)}
-                    for sample in self.sources.values()
+                    | {"age": round(now - sample["seen_at"], 1),
+                       "bssid": self.stations.get(mac),
+                       "ssid": self.access_points.get(self.stations.get(mac, mac)),
+                       "identity_role": "AP" if mac in self.access_points else "station" if mac in self.stations else "unknown"}
+                    for mac, sample in self.sources.items()
                     if now - sample["seen_at"] < 15
                 ],
             }
@@ -124,20 +181,51 @@ def read_serial(port, baud, state):
         try:
             with serial.Serial(port, baudrate=baud, timeout=0.2) as connection:
                 with state.lock:
+                    state.connected = True
                     state.status = f"Connected to {port}; waiting for CSI…"
                 while True:
+                    try:
+                        channel = state.commands.get_nowait()
+                    except Empty:
+                        pass
+                    else:
+                        connection.write(f"CH {channel}\n".encode("ascii"))
                     line = connection.readline().decode("utf-8", errors="replace").strip()
+                    if line.startswith(("CHANNEL,", "CHANNEL_ERROR,", "AP_INFO,", "STA_INFO,")):
+                        state.observe(line)
                     sample = parse_csi_line(line, state.sample_format)
                     if sample:
                         state.update(sample)
         except (OSError, serial.SerialException) as error:
             with state.lock:
+                state.connected = False
                 state.status = f"Serial unavailable: {error}"
             time.sleep(2)
 
 
 def make_handler(state):
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if urlsplit(self.path).path != "/api/channel":
+                self.send_error(404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= length <= 128:
+                    raise ValueError
+                channel = json.loads(self.rfile.read(length))["channel"]
+                if type(channel) is not int or channel not in state.channels:
+                    raise ValueError
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                self.send_error(400, "invalid channel")
+                return
+            if not state.request_channel(channel):
+                self.send_error(503, "board serial port unavailable")
+                return
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_GET(self):
             url = urlsplit(self.path)
             if url.path == "/":

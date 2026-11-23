@@ -39,6 +39,26 @@ class CsiDecodeTests(unittest.TestCase):
         self.assertEqual([packet["amplitudes"] for packet in state.snapshot(1)["packets"]],
                          [[11, 21, 31]])
 
+    def test_station_inherits_observed_ap_ssid_and_channel_change_clears_it(self):
+        state = gui.CsiState("c5-12bit")
+        station = "AA:BB:CC:DD:EE:01"
+        ap = "AA:BB:CC:DD:EE:02"
+        state.observe(f"AP_INFO,{ap},546573742057694669")
+        state.observe(f"STA_INFO,{station},{ap}")
+        state.update({"mac": station, "role": "STA", "rssi": -55,
+                      "channel": 11, "amplitudes": [10, 20]})
+        source = state.snapshot()["sources"][0]
+        self.assertEqual((source["ssid"], source["bssid"], source["identity_role"]),
+                         ("Test WiFi", ap, "station"))
+        state.observe("CHANNEL,6")
+        self.assertEqual(state.snapshot()["sources"], [])
+        self.assertEqual(state.snapshot()["channel"], 6)
+        self.assertTrue(state.snapshot()["channel_control"])
+
+    def test_c6_channel_choices_exclude_5ghz(self):
+        self.assertNotIn(157, gui.CsiState("8bit").channels)
+        self.assertIn(157, gui.CsiState("c5-12bit").channels)
+
 
 if __name__ == "__main__":
     unittest.main()

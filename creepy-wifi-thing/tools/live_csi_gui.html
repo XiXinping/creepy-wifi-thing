@@ -17,6 +17,7 @@
     label { display: block; color: #a3b0c9; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
     select, input[type=range] { display: block; margin-top: 7px; }
     select { border: 1px solid #35415a; border-radius: 8px; color: #e8edfb; background: #151e31; padding: 10px 13px; min-width: 290px; font: inherit; }
+    #wifi-channel { min-width: 100px; }
     input[type=range] { width: 215px; accent-color: #50d9c1; }
     .readout { font-size: 15px; color: #e8edfb; }
     .view-switch { display: flex; gap: 4px; padding: 4px; border: 1px solid #35415a; border-radius: 9px; background: #151e31; }
@@ -56,6 +57,7 @@
   <main>
     <div class="toolbar">
       <label>Transmitter<select id="source"><option value="">Waiting for packets…</option></select></label>
+      <label id="channel-label" hidden>Listen on channel<select id="wifi-channel"><option value="">Connecting…</option></select></label>
       <label>CSI sample <span class="readout" id="carrier-value">—</span><input id="carrier" type="range" min="0" max="0" value="0" disabled></label>
       <div class="view-switch" role="group" aria-label="Chart view"><button id="trend-view" type="button" aria-pressed="true">Trend</button><button id="heatmap-view" type="button" aria-pressed="false">Heatmap</button></div>
     </div>
@@ -82,6 +84,7 @@
     let latest = null;
     let selectedMac = '';
     let sampleFormat = 'c5-12bit';
+    let currentChannel = null;
     let view = 'trend';
     let polling = false;
 
@@ -276,13 +279,25 @@
       try {
         const response = await fetch(`/api/state?since=${lastSequence}`, {cache: 'no-store'});
         const data = await response.json();
+        if (data.channel !== null && data.channel !== currentChannel) {
+          currentChannel = data.channel;
+          history.length = 0;
+          lastSequence = 0;
+          selectedMac = '';
+        }
         if (data.total < lastSequence) { history.length = 0; lastSequence = 0; }
         sampleFormat = data.format;
         for (const packet of data.packets) {
           if (packet.seq > lastSequence) { history.push(packet); lastSequence = packet.seq; }
         }
-        $('status').textContent = data.status;
+        $('status').textContent = data.channel_error ? `Channel change failed: ${data.channel_error}` : data.status;
         $('packets').textContent = data.total.toLocaleString();
+        $('channel-label').hidden = !data.channel_control;
+        const channelSelect = $('wifi-channel');
+        if (channelSelect.options.length === 1 && !channelSelect.options[0].value && data.channel !== null) {
+          channelSelect.replaceChildren(...data.channels.map(channel => new Option(String(channel), String(channel))));
+        }
+        if (data.channel !== null && (data.channel_error || document.activeElement !== channelSelect)) channelSelect.value = String(data.channel);
         const sources = data.sources.sort((a, b) => b.count - a.count);
         const list = $('source');
         const focused = document.activeElement === list;
@@ -296,7 +311,13 @@
           if (current.length !== desired.length || current.some((mac, index) => mac !== desired[index])) {
             list.replaceChildren();
             if (!order.length) list.add(new Option('Waiting for packets…', ''));
-            for (const mac of order) list.add(new Option(`${mac} · ${byMac.get(mac).role}`, mac));
+            for (const mac of order) list.add(new Option('', mac));
+          }
+          for (const option of list.options) {
+            const source = byMac.get(option.value);
+            if (!source) continue;
+            const label = `${source.ssid || 'SSID unknown'} · ${source.mac} · ${source.identity_role}`;
+            if (option.textContent !== label) option.textContent = label;
           }
         }
         if (!focused && (!selectedMac || !byMac.has(selectedMac))) selectedMac = sources[0]?.mac || '';
@@ -324,6 +345,17 @@
 
     $('source').addEventListener('change', event => {
       selectedMac = event.target.value; latest = null; render();
+    });
+    $('wifi-channel').addEventListener('change', async event => {
+      const channel = Number(event.target.value);
+      $('status').textContent = `Switching to channel ${channel}…`;
+      try {
+        const response = await fetch('/api/channel', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({channel})});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        $('status').textContent = `Channel change failed: ${error.message}`;
+        event.target.value = String(currentChannel);
+      }
     });
     $('carrier').addEventListener('input', render);
     $('trend-view').addEventListener('click', () => setView('trend'));

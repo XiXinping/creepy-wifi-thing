@@ -20,6 +20,7 @@ use esp_radio::wifi::WifiController;
 use {esp_backtrace as _, esp_println as _};
 
 extern crate alloc;
+mod sniffer_control;
 
 /// Primary channel to monitor. On the ESP32-C5, channels >= 36 select 5 GHz.
 /// The ESP32-C6 supports only 2.4 GHz channels.
@@ -108,7 +109,7 @@ async fn report_task() {
         if snapshot.is_empty() {
             esp_println::println!(
                 "No CSI yet — is anything transmitting on channel {}?",
-                CHANNEL
+                sniffer_control::channel()
             );
             continue;
         }
@@ -149,6 +150,7 @@ static SUBCARRIERS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU3
 async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
+    let usb = esp_hal::usb::usb_serial_jtag::UsbSerialJtag::new(peripherals.USB_DEVICE);
     init_logger(spawner, LogMode::EspCsiTool);
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 61440);
@@ -188,6 +190,7 @@ async fn main(spawner: Spawner) -> ! {
     });
 
     set_csi_callback(on_csi);
+    spawner.spawn(sniffer_control::control_task(usb).unwrap());
     join(node.run(), report_task()).await;
 
     loop {

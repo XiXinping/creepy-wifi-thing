@@ -8,7 +8,7 @@ The vendored [`ESP32-CSI-Tool/`](./ESP32-CSI-Tool/) is the original ESP-IDF 4.3 
 
 1. Install [Rust and rustup](https://rustup.rs/) and [espflash](https://github.com/esp-rs/espflash). The project requests nightly Rust, `rust-src`, and the `riscv32imac-unknown-none-elf` target in its toolchain file. Load Cargo into the shell with `. "$HOME/.cargo/env"` if `cargo` is not found.
 2. Connect the XIAO ESP32-C5 through its USB-C data port. If automatic reset fails, hold **BOOT**, tap **RESET**, then release **BOOT** to enter download mode.
-3. In [`creepy-wifi-thing/src/bin/sniffer.rs`](./creepy-wifi-thing/src/bin/sniffer.rs), set `CHANNEL` to the primary channel of the Wi-Fi traffic you want to measure. Channels 1–11 are the simplest starting point; the ESP32-C5 can also use supported 5 GHz channels. The ESP32-C6 uses 2.4 GHz only.
+3. The sniffer starts on channel 11. Change `CHANNEL` in [`creepy-wifi-thing/src/bin/sniffer.rs`](./creepy-wifi-thing/src/bin/sniffer.rs) only if you want a different power-on default; the live GUI can switch channels without rebuilding. The ESP32-C5 supports listed 2.4 and 5 GHz primary channels. The ESP32-C6 uses 2.4 GHz only.
 4. From the Rust project directory, build and flash:
 
    ```sh
@@ -39,6 +39,8 @@ python3 -m venv .venv
 ```
 
 Open <http://127.0.0.1:8765/>. Change `--port` if the board appears under another serial device name. The server binds only to `127.0.0.1`. Press Ctrl+C in its terminal to stop it. For ESP32-C6 or older 8-bit CSI firmware, pass `--sample-format 8bit`.
+
+With the updated passive sniffer firmware, use **Listen on channel** to switch the radio while the GUI runs. The sniffer observes one channel at a time; changing channels clears the active transmitter list and CSI history. The transmitter menu shows an SSID when the sniffer has heard a beacon or probe response from that AP. It associates a station MAC with an AP when it observes a suitable data or association frame. An unknown label means the required frame has not been heard, the SSID is hidden, or the station's randomized MAC has changed. SSID labels are best-effort observations, not verified identities. The `follower` firmware does not expose this channel control.
 
 The slider's maximum follows the latest packet's decoded sample count. A 104-byte ESP32-C5 capture contains 26 complex I/Q values, indexed **0–25**. A different frame or capture format can have a different count. Sample 0 can be invalid on ESP32-C5 hardware, so start with sample 1 when comparing amplitude over time.
 

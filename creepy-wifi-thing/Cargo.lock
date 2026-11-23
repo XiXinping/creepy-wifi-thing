@@ -200,6 +200,8 @@ dependencies = [
  "esp-println",
  "esp-radio",
  "esp-rtos",
+ "esp-wifi-sys-esp32c5",
+ "esp-wifi-sys-esp32c6",
  "heapless 0.9.3",
  "portable-atomic",
  "rtt-target",
