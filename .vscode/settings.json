@@ -1,0 +1,16 @@
+{
+  "rust-analyzer.linkedProjects": ["csi-collection/Cargo.toml"],
+  "rust-analyzer.check.allTargets": false,
+  "rust-analyzer.cargo.allTargets": false,
+  "files.watcherExclude": {
+    "**/target/**": true
+  },
+  "search.exclude": {
+    "**/target/**": true,
+    "esp-csi-rs/**": true
+  },
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true
+  }
+}
