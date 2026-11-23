@@ -66,6 +66,11 @@ const PERIOD: Duration = Duration::from_millis(1);
 /// one receiver tends to raise *that* receiver's CSI callback rate.
 const DST_MAC: Option<[u8; 6]> = None;
 
+/// Max TX power in 0.25 dBm steps, range [8, 84]; 80 = 20 dBm. esp-radio's default is 20 (5 dBm).
+/// The driver may cap it lower per PHY rate.
+/// See: https://docs.espressif.com/projects/rust/esp-radio/1.0.0-beta.1/esp32/esp_radio/wifi/struct.WifiController.html#method.set_max_tx_power
+const TX_POWER_QUARTER_DBM: i8 = 80;
+
 // ────────────────────────────────────────────────────────────────────────────────────────────────
 
 static WIFI_CONTROLLER: static_cell::StaticCell<WifiController<'static>> =
@@ -88,6 +93,13 @@ async fn main(spawner: Spawner) -> ! {
     let wifi_controller = esp_radio::wifi::WifiController::new(peripherals.WIFI, config_radio)
         .expect("Failed to initialize Wi-Fi controller");
     let controller = WIFI_CONTROLLER.init(wifi_controller);
+
+    // `WifiController::new` already started Wi-Fi in STA mode, and the emitter's bring-up stays in
+    // STA mode, so this survives into `node.run()`.
+    // Must happen here: `NodeHardware` takes the controller's only `&mut`.
+    controller
+        .set_max_tx_power(TX_POWER_QUARTER_DBM)
+        .expect("Failed to set TX power");
 
     let mut emitter = EmitterConfig::new(CHANNEL, PHY).with_period(PERIOD);
     if let Some(mac) = DST_MAC {
