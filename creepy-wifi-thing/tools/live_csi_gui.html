@@ -21,11 +21,11 @@
     input[type=range] { width: 215px; accent-color: #50d9c1; }
     .readout { font-size: 15px; color: #e8edfb; }
     .view-switch { display: flex; gap: 4px; padding: 4px; border: 1px solid #35415a; border-radius: 9px; background: #151e31; }
-    .view-switch button, .candidate { border: 0; border-radius: 6px; color: #a3b0c9; background: transparent; cursor: pointer; font: inherit; }
+    .view-switch button { border: 0; border-radius: 6px; color: #a3b0c9; background: transparent; cursor: pointer; font: inherit; }
     .view-switch button { padding: 8px 13px; }
     .view-switch button[aria-pressed=true] { background: #334864; color: #fff; }
-    .candidate { display: flex; justify-content: space-between; width: 100%; padding: 9px 11px; margin-top: 6px; text-align: left; background: #1b293b; color: #f5c17d; }
-    .candidate:hover { background: #2d3d50; }
+    .motion-period { padding: 9px 11px; margin-top: 6px; border-left: 3px solid #f5c17d; border-radius: 6px; background: #1b293b; color: #f5c17d; font-variant-numeric: tabular-nums; }
+    .motion-period small { display: block; color: #a3b0c9; }
     .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 17px; }
     .stat, .panel { background: #121b2d; border: 1px solid #27354c; border-radius: 13px; }
     .stat { padding: 15px 18px; }
@@ -72,10 +72,10 @@
       <section class="panel"><h2>Current spectrum</h2><p>Latest packet · all decoded complex samples</p><canvas id="spectrum"></canvas></section>
     </div>
     <div class="heatmap-layout" id="heatmap-panels" hidden>
-      <section class="panel"><h2>All CSI samples over time</h2><p>Each column is a received packet · newest at right · latest 60 seconds</p><label class="heatmap-option"><input id="variance-only" type="checkbox">Highlight variance only</label><canvas id="heatmap"></canvas><div class="legend"></div><span class="heatmap-note" id="heatmap-legend">Low → high amplitude. Orange outlined rows are recent change candidates.</span></section>
-      <section class="panel"><h2>Potential motion channels</h2><p>Recent normalized changes compared with the earlier baseline</p><div id="candidates" class="heatmap-note">Collecting a baseline…</div><p class="heatmap-note" style="margin-top:16px">Candidates indicate CSI changes, not confirmed motion. Moving devices, Wi-Fi traffic and radio noise can also change amplitude.</p></section>
+      <section class="panel"><h2>All CSI samples over time</h2><p>Each column is a received packet · newest at right · latest 60 seconds</p><label class="heatmap-option"><input id="variance-only" type="checkbox">Highlight variance only</label><canvas id="heatmap"></canvas><div class="legend"></div><span class="heatmap-note" id="heatmap-legend">Low → high amplitude. Orange vertical blocks mark suspected motion periods.</span></section>
+      <section class="panel"><h2>Suspected motion periods</h2><p>Time spans when many CSI samples changed together</p><div id="motion-periods" class="heatmap-note">Collecting a baseline…</div><p class="heatmap-note" style="margin-top:16px">These periods indicate CSI changes, not confirmed motion. Moving devices, Wi-Fi traffic and radio noise can also change amplitude.</p></section>
     </div>
-    <footer>Amplitude is √(I² + Q²). The slider shows zero-based indices for the samples in the latest packet; the number varies with the capture format and frame. C5 capture uses signed 12-bit I/Q words. Its first complex sample may be invalid and is excluded from change ranking. The GUI only listens on this computer.</footer>
+    <footer>Amplitude is √(I² + Q²). The slider shows zero-based indices for the samples in the latest packet; the number varies with the capture format and frame. C5 capture uses signed 12-bit I/Q words. Its first complex sample may be invalid and is excluded from motion analysis. The GUI only listens on this computer.</footer>
   </main>
   <script>
     const $ = id => document.getElementById(id);
@@ -95,27 +95,42 @@
       return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
     }
 
-    function motionCandidates(packets, count, format, now) {
+    function motionPeriods(packets, count, format, now, reference) {
       const first = format === 'c5-12bit' ? 1 : 0;
-      const baseline = packets.filter(p => p.time >= now - 60000 && p.time < now - 10000 && p.amplitudes.length === count);
-      const recent = packets.filter(p => p.time >= now - 5000 && p.amplitudes.length === count);
-      if (baseline.length < 12 || recent.length < 5) return {ready: false, candidates: []};
-      const normalize = packet => {
+      if (!reference || count - first < 4) return {ready: false, periods: []};
+      const buckets = new Map();
+      for (const packet of packets) {
+        if (packet.amplitudes.length !== count || packet.time < now - 60000) continue;
         const gain = Math.max(median(packet.amplitudes.slice(first)), 1);
-        return packet.amplitudes.map(value => value / gain);
-      };
-      const oldValues = baseline.map(normalize), newValues = recent.map(normalize);
-      const candidates = [];
-      for (let index = first; index < count; index++) {
-        const old = oldValues.map(row => row[index]), current = newValues.map(row => row[index]);
-        const center = median(old), oldNoise = 1.4826 * median(old.map(value => Math.abs(value - center)));
-        const newCenter = median(current), newNoise = 1.4826 * median(current.map(value => Math.abs(value - newCenter)));
-        const scale = Math.max(oldNoise, 0.04);
-        const score = Math.max(Math.abs(newCenter - center) / scale, Math.max(0, newNoise - oldNoise) / scale);
-        if (score >= 3) candidates.push({index, score});
+        let changed = 0;
+        for (let index = first; index < count; index++) {
+          const {center, scale} = reference[index];
+          if (Math.abs(packet.amplitudes[index] / gain - center) / scale >= 3) changed++;
+        }
+        const second = Math.floor(packet.time / 1000) * 1000;
+        const bucket = buckets.get(second) || {start: second, packets: 0, changedPackets: 0, changedFraction: 0};
+        const fraction = changed / (count - first);
+        bucket.packets++;
+        if (fraction >= 0.25) bucket.changedPackets++;
+        bucket.changedFraction += fraction;
+        buckets.set(second, bucket);
       }
-      candidates.sort((a, b) => b.score - a.score);
-      return {ready: true, candidates: candidates.slice(0, 5)};
+      const active = [...buckets.values()].filter(bucket => bucket.packets >= 3 && bucket.changedPackets / bucket.packets >= 0.5).sort((a, b) => a.start - b.start);
+      const periods = [];
+      for (const bucket of active) {
+        const previous = periods[periods.length - 1];
+        if (previous && bucket.start - previous.lastActive <= 2000) {
+          previous.end = bucket.start + 1000;
+          previous.lastActive = bucket.start;
+          previous.changedFraction += bucket.changedFraction;
+          previous.packets += bucket.packets;
+          previous.activeSeconds++;
+        } else {
+          periods.push({start: bucket.start, end: bucket.start + 1000, lastActive: bucket.start, changedFraction: bucket.changedFraction, packets: bucket.packets, activeSeconds: 1});
+        }
+      }
+      // A single busy second is too easy to trigger from an isolated Wi-Fi burst.
+      return {ready: true, periods: periods.filter(period => period.activeSeconds >= 2).map(period => ({...period, fraction: period.changedFraction / period.packets}))};
     }
 
     function heatColor(value, max) {
@@ -142,7 +157,7 @@
       });
     }
 
-    function drawHeatmap(packets, count, candidates, now) {
+    function drawHeatmap(packets, count, periods, now, reference) {
       const canvas = $('heatmap'), {ctx, width, height} = prepare(canvas);
       const left = 44, right = 16, top = 16, bottom = 35;
       const w = Math.max(1, width - left - right), h = Math.max(1, height - top - bottom);
@@ -154,10 +169,9 @@
         return;
       }
       const varianceOnly = $('variance-only').checked;
-      const reference = varianceOnly ? varianceReference(packets, count, sampleFormat, now) : null;
       $('heatmap-legend').textContent = varianceOnly
-        ? reference ? 'Color shows changes at least 3× above baseline variation; dark cells are below that threshold. Orange outlines mark recent change candidates.' : 'Collecting an earlier baseline for variance highlighting (at least 12 packets).'
-        : 'Low → high amplitude. Orange outlined rows are recent change candidates.';
+        ? reference ? 'Color shows changes at least 3× above baseline variation; dark cells are below that threshold. Orange vertical blocks mark suspected motion periods.' : 'Collecting an earlier baseline for variance highlighting (at least 12 packets).'
+        : 'Low → high amplitude. Orange vertical blocks mark suspected motion periods.';
       const sorted = varianceOnly ? [] : packets.flatMap(packet => packet.amplitudes).sort((a, b) => a - b);
       const max = Math.max(1, sorted[Math.floor(sorted.length * 0.95)] || 1);
       const rowHeight = h / count, columnWidth = Math.max(2, w / Math.max(packets.length, 1));
@@ -180,7 +194,14 @@
         });
       }
       ctx.strokeStyle = '#f5c17d'; ctx.lineWidth = 1.5;
-      for (const candidate of candidates) ctx.strokeRect(left, top + candidate.index * rowHeight, w, rowHeight);
+      for (const period of periods) {
+        const start = Math.max(left, left + w * (1 - (now - period.start) / 60000));
+        const end = Math.min(left + w, left + w * (1 - (now - period.end) / 60000));
+        if (end <= start) continue;
+        ctx.fillStyle = 'rgba(245, 193, 125, 0.18)';
+        ctx.fillRect(start, top, end - start, h);
+        ctx.strokeRect(start, top, end - start, h);
+      }
       ctx.fillStyle = '#9aabc6';
       for (const index of new Set([0, Math.floor(count / 4), Math.floor(count / 2), Math.floor(count * 3 / 4), count - 1])) {
         ctx.fillText(String(index), 7, top + (index + 0.5) * rowHeight + 4);
@@ -189,20 +210,24 @@
       ctx.fillText('Now', left + w - 26, height - 11);
     }
 
-    function renderCandidates(analysis) {
-      const container = $('candidates');
+    function renderMotionPeriods(analysis, now) {
+      const container = $('motion-periods');
       container.replaceChildren();
       if (!analysis.ready) {
-        container.textContent = 'Collecting baseline: at least 12 earlier and 5 recent packets are needed.';
-      } else if (!analysis.candidates.length) {
-        container.textContent = 'No strong sample changes in the last 5 seconds.';
+        container.textContent = 'Collecting baseline: at least 12 packets from 10–60 seconds ago are needed.';
+      } else if (!analysis.periods.length) {
+        container.textContent = 'No sustained, broad CSI changes in the last 60 seconds.';
       } else {
-        for (const {index, score} of analysis.candidates) {
-          const button = document.createElement('button');
-          button.className = 'candidate'; button.type = 'button';
-          button.textContent = `Sample ${index}  ·  change ${score.toFixed(1)}×`;
-          button.addEventListener('click', () => { $('carrier').value = index; setView('trend'); render(); });
-          container.append(button);
+        for (const period of [...analysis.periods].reverse()) {
+          const item = document.createElement('div');
+          item.className = 'motion-period';
+          const startAgo = Math.max(0, Math.round((now - period.start) / 1000));
+          const endAgo = Math.max(0, Math.round((now - period.end) / 1000));
+          item.textContent = `${startAgo}–${endAgo}s ago · ${Math.round((period.end - period.start) / 1000)}s`;
+          const detail = document.createElement('small');
+          detail.textContent = `${Math.round(period.fraction * 100)}% of CSI samples changed on average`;
+          item.append(detail);
+          container.append(item);
         }
       }
     }
@@ -267,9 +292,10 @@
         draw($('history'), packets.map(p => ({x: Math.max(0, 1 - (now - p.time) / 60000), value: p.amplitudes[carrier] || 0})), '#54ddc5');
         draw($('spectrum'), amps.map((value, i) => ({x: amps.length > 1 ? i / (amps.length - 1) : 0, value})), '#83aaff');
       } else {
-        const analysis = motionCandidates(packets, amps.length, sampleFormat, now);
-        drawHeatmap(packets, amps.length, analysis.candidates, now);
-        renderCandidates(analysis);
+        const reference = varianceReference(packets, amps.length, sampleFormat, now);
+        const analysis = motionPeriods(packets, amps.length, sampleFormat, now, reference);
+        drawHeatmap(packets, amps.length, analysis.periods, now, reference);
+        renderMotionPeriods(analysis, now);
       }
     }
 
