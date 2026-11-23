@@ -52,10 +52,12 @@ The station scans for the hotspot, so leave `CHANNEL_HINT` as `None`; you do not
 
 ```sh
 cd creepy-wifi-thing
-CSI_WIFI_SSID='Mori iPhone' CSI_WIFI_PASSWORD='Your hotspot password' cargo run --release --bin follower
+CSI_WIFI_SSID='Your Wi-Fi SSID' CSI_WIFI_PASSWORD='Your hotspot password' cargo run --release --bin follower
 ```
 
-Stop the flash monitor, then run the live GUI as above. The GUI will plot CSI from the associated hotspot link. With the provided hotspot, the XIAO ESP32-C5 connected and captured CSI on **channel 6**. The channel can change if the hotspot restarts, so leave `CHANNEL_HINT` unset for `follower`. The `follower` firmware must be rebuilt when the hotspot name or password changes. Do not commit the password to the repository.
+Stop the flash monitor, then run the live GUI as above. The GUI will plot CSI from the associated hotspot link. The channel can change if the hotspot restarts, so leave `CHANNEL_HINT` unset for `follower`. The `follower` firmware must be rebuilt when the hotspot name or password changes. Do not commit the password to the repository.
+
+If the monitor repeatedly reports `NoAccessPointFound`, check that the hotspot is on and advertising the exact SSID, including spelling and capitalization. On an iPhone, keep the Personal Hotspot settings screen open during initial discovery and try **Maximize Compatibility**. A successful join prints `WiFi Connected`; until then, CSI seen while scanning other networks is not a measurement of the intended hotspot link.
 
 ## ESP32-C6 build
 
