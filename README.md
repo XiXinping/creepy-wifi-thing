@@ -27,7 +27,7 @@ The XIAO uses the ESP32-C5's native USB Serial/JTAG connection for logging. The 
 
 ## Live amplitude GUI
 
-The local dashboard has a **Trend** view with the latest CSI spectrum and a 60-second amplitude trace for a selected transmitter and CSI sample. The **Heatmap** view shows every decoded sample over the same 60-second window, with packet time from left to right and sample index from top to bottom. It decodes the ESP32-C5's signed 12-bit I/Q samples; the older `ESP32-CSI-Tool` plotter assumes 8-bit samples and is unsuitable for this capture format.
+The local dashboard has a **Trend** view with the latest CSI spectrum and a 60-second amplitude trace for a selected transmitter and CSI sample. The **Heatmap** view shows every decoded sample over the same 60-second window, with packet time from left to right and sample index from top to bottom. Select **Highlight variance only** to darken cells below a 3× change threshold relative to the earlier baseline; color then represents change rather than raw amplitude. The display needs at least 12 packets from 10–60 seconds ago before it can highlight variance. It decodes the ESP32-C5's signed 12-bit I/Q samples; the older `ESP32-CSI-Tool` plotter assumes 8-bit samples and is unsuitable for this capture format.
 
 With either firmware flashed, stop any other serial monitor and run:
 
