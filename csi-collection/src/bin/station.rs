@@ -36,7 +36,7 @@ use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use esp_radio::wifi::sta::StationConfig;
-use esp_radio::wifi::{AuthenticationMethodConfig, Password, WifiController};
+use esp_radio::wifi::{AuthenticationMethodConfig, Password, PowerSaveMode, WifiController};
 use {esp_backtrace as _, esp_println as _};
 
 extern crate alloc;
@@ -44,8 +44,8 @@ extern crate alloc;
 // ── Knobs ───────────────────────────────────────────────────────────────────────────────────────
 
 /// Must match `access_point` (or your own AP).
-const SSID: &str = "Mori iPhone";
-const PASSWORD: &str = "thosewhoknow";
+const SSID: &str = "fbi_surveillance_van";
+const PASSWORD: &str = "password";
 
 /// `Some(Initiator)` if this node's uplink is the traffic being measured; `None` if it only
 /// measures a link someone else keeps busy.
@@ -88,7 +88,7 @@ async fn main(spawner: Spawner) -> ! {
     let wifi_controller = esp_radio::wifi::WifiController::new(peripherals.WIFI, config_radio)
         .expect("Failed to initialize Wi-Fi controller");
     let controller = WIFI_CONTROLLER.init(wifi_controller);
-    //let _ = controller.set_power_saving(PowerSaveMode::None);
+    let _ = controller.set_power_saving(PowerSaveMode::None);
 
     let client_config = StationConfig::default()
         .with_ssid(SSID.try_into().expect("SSID longer than 32 bytes"))
