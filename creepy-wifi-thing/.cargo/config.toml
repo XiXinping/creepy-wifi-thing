@@ -1,8 +1,5 @@
-# Keep compilation settings in this file and user/runtime settings in `esp-config.toml`.
-include = ["esp-config.toml"]
-
 [target.riscv32imac-unknown-none-elf]
-runner = "probe-rs run --chip=esp32c6 --preverify --always-print-stacktrace --no-location"
+runner = "espflash flash --monitor"
 
 [build]
 rustflags = [

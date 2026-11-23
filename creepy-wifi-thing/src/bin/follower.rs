@@ -14,25 +14,22 @@
 //! something to measure. It has **no session role** when it only measures an already-busy link
 //! and drives nothing itself; set `SESSION_ROLE` to `None` and drop the ping rate to `None`.
 //!
-//! Associates to an ESP softAP (`access_point`) or to any commercial router. On the dual-band
-//! ESP32-C5, `with_channel_hint` pins the band before the scan — without it the node scans both,
-//! which is slower but finds an AP on either.
+//! Associates to a phone hotspot or Wi-Fi router. On the dual-band ESP32-C5,
+//! `with_channel_hint` pins the band before the scan — without it the node scans both.
 //!
-//! Build / run (pair with `access_point` on the same SSID):
-//!   cargo esp32c6 --example station
+//! Build / run with CSI_WIFI_SSID and CSI_WIFI_PASSWORD in the environment.
 
 #![no_std]
 #![no_main]
 
-use defmt::println;
-use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use defmt_rtt as _;
 use esp_csi_rs::csi::CsiPacket;
-use esp_csi_rs::logging::logging::{LogMode, init_logger};
+use esp_csi_rs::logging::logging::{LogMode, init_logger, log_csi};
 use esp_csi_rs::{
     CsiConfig, CsiNode, MeasurementSetup, NodeHardware, Reporting, SessionRole, WifiStationConfig,
-    log_ln, set_csi_callback,
+    set_csi_callback,
 };
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
@@ -45,9 +42,9 @@ extern crate alloc;
 
 // ── Knobs ───────────────────────────────────────────────────────────────────────────────────────
 
-/// Must match `access_point` (or your own AP).
-const SSID: &str = "creepywifithing";
-const PASSWORD: &str = "birdsarenotreal";
+/// Build with CSI_WIFI_SSID and CSI_WIFI_PASSWORD set to the hotspot's values.
+const SSID: &str = env!("CSI_WIFI_SSID", "set CSI_WIFI_SSID to the iPhone hotspot name");
+const PASSWORD: &str = env!("CSI_WIFI_PASSWORD", "set CSI_WIFI_PASSWORD to the hotspot password");
 
 /// `Some(Initiator)` if this node's uplink is the traffic being measured; `None` if it only
 /// measures a link someone else keeps busy.
@@ -75,6 +72,7 @@ static LATEST_RSSI: AtomicI32 = AtomicI32::new(0);
 static CSI_PKT_COUNT: AtomicU32 = AtomicU32::new(0);
 
 fn on_csi(packet: &CsiPacket) {
+    log_csi(packet.clone());
     LATEST_RSSI.store(packet.rssi() as i32, Ordering::Relaxed);
     CSI_PKT_COUNT.fetch_add(1, Ordering::Relaxed);
 }
@@ -83,7 +81,7 @@ fn on_csi(packet: &CsiPacket) {
 async fn stats_task() {
     loop {
         Timer::after_secs(1).await;
-        log_ln!(
+        esp_println::println!(
             "CSI Packets: {}, Latest RSSI: {}",
             CSI_PKT_COUNT.load(Ordering::Relaxed),
             LATEST_RSSI.load(Ordering::Relaxed),
@@ -95,7 +93,7 @@ async fn stats_task() {
 async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    init_logger(spawner, LogMode::Text);
+    init_logger(spawner, LogMode::EspCsiTool);
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 61440);
 
@@ -121,7 +119,7 @@ async fn main(spawner: Spawner) -> ! {
         station_config = station_config.with_channel_hint(channel);
     }
 
-    println!("Starting station on SSID {}", SSID);
+    esp_println::println!("Starting station on SSID {}", SSID);
 
     let csi_hardware = NodeHardware::new(controller);
     let mut setup = MeasurementSetup::new().acquisition(CsiConfig::default());
@@ -136,7 +134,7 @@ async fn main(spawner: Spawner) -> ! {
     node.run().await;
 
     loop {
-        println!("Station stopped");
+        esp_println::println!("Station stopped");
         Timer::after(Duration::from_secs(5)).await;
     }
 }

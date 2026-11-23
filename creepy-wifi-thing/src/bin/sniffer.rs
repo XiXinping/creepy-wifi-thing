@@ -1,57 +1,34 @@
 #![no_std]
 #![no_main]
 
-use defmt::println;
-use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::{Duration, Timer};
+use defmt_rtt as _;
 use esp_csi_rs::csi::CsiPacket;
 use esp_csi_rs::logging::logging::{LogMode, init_logger, log_csi};
 use esp_csi_rs::wire::{CsiPayload, PpduFormat};
 use esp_csi_rs::{
-    CsiConfig, CsiNode, CsiNodeClient, MeasurementSetup, NodeHardware, Reporting, SessionRole,
-    Threshold, WifiApConfig, WifiStationConfig, set_csi_callback,
+    CsiConfig, CsiNode, MeasurementSetup, NodeHardware, Reporting, WifiSnifferConfig,
+    set_csi_callback,
 };
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
-use esp_radio::wifi::ap::AccessPointConfig;
-use esp_radio::wifi::sta::StationConfig;
-use esp_radio::wifi::{AuthenticationMethodConfig, Password, WifiController};
+use esp_radio::wifi::WifiController;
 use {esp_backtrace as _, esp_println as _};
 
 extern crate alloc;
 
-/// Channel to lock. Must match the emitter's primary channel when pairing with one.
+/// Primary channel to monitor. On the ESP32-C5, channels >= 36 select 5 GHz.
+/// The ESP32-C6 supports only 2.4 GHz channels.
 const CHANNEL: u8 = 11;
-
-/// Must match `access_point` (or your own AP).
-const SSID: &str = "creepywifithing";
-const PASSWORD: &str = "birdsarenotreal";
-
-/// `Some(Initiator)` if this node's uplink is the traffic being measured; `None` if it only
-/// measures a link someone else keeps busy.
-const SESSION_ROLE: Option<SessionRole> = Some(SessionRole::Initiator);
-
-/// DHCP lease pool size. Each client gets a distinct address (MAC to IP binding).
-const LEASE_POOL: u8 = 1;
-
-/// Fire one unicast frame to *every* active lease per tick instead of one lease per tick.
-const SYNC_BURST: bool = false;
-
-/// Gateway ping rate (Hz): the measurement periodicity, the uplink a reporting AP measures. Set
-/// `None` for a passive station that generates no traffic of its own.
-const PING_RATE_HZ: Option<u16> = Some(4000);
 
 /// `Report { to }`, `ThresholdBased(..)` or `Decimate(n)`. A threshold must be calibrated: run
 /// with `Threshold::new(level, hold_ms).variation_only()` first and read the scores a still room
 /// gives.
 const REPORTING: Reporting = Reporting::HOST;
-
-#[allow(dead_code)]
-const EXAMPLE_THRESHOLD: Threshold = Threshold::new(6000, 500);
 
 /// HE-LTF capture (ESP32-C5 / C6 only).
 const HE20: bool = false;
@@ -94,7 +71,7 @@ static SOURCES: Mutex<
 
 fn on_csi(packet: &CsiPacket) {
     log_csi(packet.clone());
-    // Two `i8` samples per subcarrier, so this is the width of the capture.
+    // Count of complex values reported by esp-csi-rs for this capture.
     SUBCARRIERS.store(
         packet.subcarriers() as u32,
         core::sync::atomic::Ordering::Relaxed,
@@ -129,7 +106,7 @@ async fn report_task() {
         Timer::after_secs(1).await;
         let snapshot = SOURCES.lock(|cell| cell.borrow().clone());
         if snapshot.is_empty() {
-            println!(
+            esp_println::println!(
                 "No CSI yet — is anything transmitting on channel {}?",
                 CHANNEL
             );
@@ -141,7 +118,7 @@ async fn report_task() {
                 .find(|(mac, _)| *mac == entry.mac)
                 .map(|(_, c)| *c)
                 .unwrap_or(0);
-            println!(
+            esp_println::println!(
                 "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}  {} CSI/s  total {}  RSSI {}  subcarriers {}  {}  layout maps {}",
                 entry.mac[0],
                 entry.mac[1],
@@ -184,45 +161,26 @@ async fn main(spawner: Spawner) -> ! {
         .expect("Failed to initialize Wi-Fi controller");
     let controller = WIFI_CONTROLLER.init(wifi_controller);
 
-    println!(
+    esp_println::println!(
         "Starting sniffer (observer, receiver) on channel {}",
         CHANNEL
     );
 
-    let mut node_handle = CsiNodeClient::new();
-
-    let password = Password::try_from(PASSWORD).unwrap();
-
-    //let client_config = StationConfig::default()
-    //    .with_ssid(SSID.try_into().expect("SSID longer than 32 bytes"))
-    //    .with_authentication(esp_radio::wifi::AuthenticationMethodConfig::Wpa(password));
-    //
-    //let station_config = WifiStationConfig::new(client_config)
-    //    .session(SESSION_ROLE)
-    //    .reporting(REPORTING);
-
-    let ap_radio_config = AccessPointConfig::default()
-        .with_ssid(SSID.try_into().expect("SSID longer than 32 bytes"))
-        .with_authentication(AuthenticationMethodConfig::Open)
-        .with_channel(CHANNEL);
-    let ap_config = WifiApConfig::new(ap_radio_config, CHANNEL, None)
-        .with_lease_pool(LEASE_POOL)
-        .with_sync_burst(SYNC_BURST)
-        .reporting(REPORTING);
-
-    println!(
-        "Starting softAP (initiator) — SSID {}, channel {}, {} lease(s)",
-        SSID, CHANNEL, LEASE_POOL
-    );
-
-    println!("Starting station on SSID {}", SSID);
-
     let csi_hardware = NodeHardware::new(controller);
-    let mut setup = MeasurementSetup::new().acquisition(CsiConfig::default());
-    if let Some(hz) = PING_RATE_HZ {
-        setup = setup.periodicity_hz(hz);
+    let mut sniffer = WifiSnifferConfig::default().with_channel(CHANNEL);
+    match REPORTING {
+        Reporting::Report { to } => sniffer = sniffer.with_report_to(to),
+        Reporting::ThresholdBased(threshold) => sniffer = sniffer.with_threshold(threshold),
+        Reporting::Decimate(n) => sniffer = sniffer.with_decimation(n),
+        _ => {}
     }
-    let mut node = CsiNode::access_point(ap_config, setup, csi_hardware);
+    let acquisition = if HE20 {
+        CsiConfig::he20()
+    } else {
+        CsiConfig::default()
+    };
+    let setup = MeasurementSetup::new().acquisition(acquisition);
+    let mut node = CsiNode::sniffer(sniffer, setup, csi_hardware);
     node.set_protocol(if HE20 {
         esp_radio::wifi::Protocol::AX
     } else {
@@ -230,11 +188,10 @@ async fn main(spawner: Spawner) -> ! {
     });
 
     set_csi_callback(on_csi);
-    let _ = &mut node_handle;
     join(node.run(), report_task()).await;
 
     loop {
-        println!("Sniffer stopped");
+        esp_println::println!("Sniffer stopped");
         Timer::after(Duration::from_secs(5)).await;
     }
 }

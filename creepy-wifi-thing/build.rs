@@ -1,4 +1,6 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=CSI_WIFI_SSID");
+    println!("cargo:rerun-if-env-changed=CSI_WIFI_PASSWORD");
     linker_be_nice();
     println!("cargo:rustc-link-arg-tests=-Tembedded-test.x");
     println!("cargo:rustc-link-arg=-Tdefmt.x");

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 · Live CSI</title>
+  <style>
+    :root { color-scheme: dark; font: 15px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b1020; color: #e8edfb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    header { border-bottom: 1px solid #26324a; padding: 23px 30px; display: flex; align-items: center; gap: 17px; flex-wrap: wrap; }
+    h1 { font-size: 21px; letter-spacing: -.02em; margin: 0; }
+    .eyebrow { color: #81a9ff; font-size: 11px; letter-spacing: .13em; text-transform: uppercase; font-weight: 700; }
+    .badge { margin-left: auto; padding: 7px 12px; border: 1px solid #36516f; background: #12253a; color: #9fdfd3; border-radius: 999px; font-size: 13px; }
+    main { max-width: 1400px; margin: auto; padding: 28px 30px 42px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 18px; margin-bottom: 22px; }
+    label { display: block; color: #a3b0c9; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+    select, input[type=range] { display: block; margin-top: 7px; }
+    select { border: 1px solid #35415a; border-radius: 8px; color: #e8edfb; background: #151e31; padding: 10px 13px; min-width: 290px; font: inherit; }
+    input[type=range] { width: 215px; accent-color: #50d9c1; }
+    .readout { font-size: 15px; color: #e8edfb; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 17px; }
+    .stat, .panel { background: #121b2d; border: 1px solid #27354c; border-radius: 13px; }
+    .stat { padding: 15px 18px; }
+    .stat .label { font-size: 11px; color: #90a1bf; text-transform: uppercase; letter-spacing: .08em; }
+    .stat .value { font-size: 25px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 17px; }
+    .panel { padding: 18px 20px 14px; min-width: 0; }
+    .panel h2 { margin: 0 0 3px; font-size: 16px; }
+    .panel p { margin: 0 0 14px; color: #90a1bf; font-size: 13px; }
+    canvas { width: 100%; height: 320px; display: block; }
+    footer { color: #8e9dbb; margin-top: 18px; font-size: 13px; }
+    @media (max-width: 850px) { .panels { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 520px) { header, main { padding-left: 16px; padding-right: 16px; } .stats { gap: 8px; } .stat .value { font-size: 20px; } select { min-width: 0; width: 100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><div class="eyebrow">Wi-Fi sensing</div><h1>ESP32 · Live CSI</h1></div>
+    <div class="badge" id="status">Connecting…</div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <label>Transmitter<select id="source"><option value="">Waiting for packets…</option></select></label>
+      <label>CSI sample <span class="readout" id="carrier-value">—</span><input id="carrier" type="range" min="0" max="0" value="0" disabled></label>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="label">Packets captured</div><div class="value" id="packets">0</div></div>
+      <div class="stat"><div class="label">Selected source rate</div><div class="value" id="rate">—</div></div>
+      <div class="stat"><div class="label">Latest RSSI</div><div class="value" id="rssi">—</div></div>
+      <div class="stat"><div class="label">Channel</div><div class="value" id="channel">—</div></div>
+    </div>
+    <div class="panels">
+      <section class="panel"><h2>Amplitude over time</h2><p>Selected CSI sample · latest 60 seconds</p><canvas id="history"></canvas></section>
+      <section class="panel"><h2>Current spectrum</h2><p>Latest packet · all decoded complex samples</p><canvas id="spectrum"></canvas></section>
+    </div>
+    <footer>Amplitude is √(I² + Q²). The slider shows zero-based indices for the samples in the latest packet; the number varies with the capture format and frame. C5 capture uses signed 12-bit I/Q words. Its first complex sample may be invalid. The GUI only listens on this computer.</footer>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const history = [];
+    let lastCount = -1;
+    let latest = null;
+    let selectedMac = '';
+
+    function prepare(canvas) {
+      const ratio = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth, height = canvas.clientHeight;
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      return {ctx, width, height};
+    }
+
+    function draw(canvas, values, color, fixedMax = null) {
+      const {ctx, width, height} = prepare(canvas);
+      const left = 43, right = 14, top = 18, bottom = 33;
+      const w = width - left - right, h = height - top - bottom;
+      ctx.clearRect(0, 0, width, height);
+      const max = fixedMax || Math.max(10, ...values.map(p => p.value)) * 1.13;
+      ctx.font = '12px ui-sans-serif, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#899bb8';
+      for (let step = 0; step <= 4; step++) {
+        const y = top + h * step / 4;
+        ctx.strokeStyle = '#29374d'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke();
+        ctx.fillText(Math.round(max * (1 - step / 4)).toString(), 2, y);
+      }
+      ctx.fillText('0', left, height - 13);
+      ctx.fillText(canvas.id === 'history' ? '60 seconds ago' : 'CSI sample', width - (canvas.id === 'history' ? 105 : 85), height - 13);
+      if (!values.length) {
+        ctx.fillStyle = '#a3b0c9'; ctx.fillText('Waiting for CSI samples…', left + 12, top + h / 2);
+        return;
+      }
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      values.forEach((point, i) => {
+        const x = left + w * point.x, y = top + h * (1 - point.value / max);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    function render() {
+      const carrier = Number($('carrier').value);
+      $('carrier-value').textContent = latest ? `${carrier} / ${latest.amplitudes.length - 1} (${latest.amplitudes.length} samples)` : '—';
+      const now = Date.now();
+      while (history.length && history[0].time < now - 60000) history.shift();
+      draw($('history'), history.map(p => ({x: Math.max(0, 1 - (now - p.time) / 60000), value: p.amplitudes[carrier] || 0})), '#54ddc5');
+      const amps = latest?.amplitudes || [];
+      draw($('spectrum'), amps.map((value, i) => ({x: amps.length > 1 ? i / (amps.length - 1) : 0, value})), '#83aaff');
+    }
+
+    async function poll() {
+      try {
+        const response = await fetch('/api/state', {cache: 'no-store'});
+        const data = await response.json();
+        $('status').textContent = data.status;
+        $('packets').textContent = data.total.toLocaleString();
+        const sources = data.sources.sort((a, b) => b.count - a.count);
+        const list = $('source');
+        const oldChoices = [...list.options].map(o => o.value).join('|');
+        const newChoices = sources.map(s => s.mac).join('|');
+        if (oldChoices !== newChoices) {
+          list.replaceChildren();
+          if (!sources.length) list.add(new Option('Waiting for packets…', ''));
+          sources.forEach(s => list.add(new Option(`${s.mac} · ${s.role} · ${s.count.toLocaleString()} packets`, s.mac)));
+          if (sources.some(s => s.mac === selectedMac)) list.value = selectedMac;
+        } else {
+          sources.forEach((s, i) => { list.options[i].textContent = `${s.mac} · ${s.role} · ${s.count.toLocaleString()} packets`; });
+        }
+        if (!selectedMac || !sources.some(s => s.mac === selectedMac)) selectedMac = sources[0]?.mac || '';
+        list.value = selectedMac;
+        const source = sources.find(s => s.mac === selectedMac);
+        if (source) {
+          $('rate').textContent = `${source.rate}/s`;
+          $('rssi').textContent = `${source.rssi} dBm`;
+          $('channel').textContent = source.channel;
+          $('carrier').max = Math.max(0, source.amplitudes.length - 1);
+          $('carrier').disabled = source.amplitudes.length < 2;
+          if (Number($('carrier').value) > Number($('carrier').max)) $('carrier').value = $('carrier').max;
+          latest = source;
+          if (lastCount !== source.count) {
+            history.push({time: Date.now(), amplitudes: source.amplitudes});
+            lastCount = source.count;
+          }
+        } else {
+          latest = null;
+          $('carrier').disabled = true;
+        }
+        render();
+      } catch (error) {
+        $('status').textContent = `GUI server unavailable: ${error.message}`;
+      }
+    }
+
+    $('source').addEventListener('change', event => {
+      selectedMac = event.target.value; lastCount = -1; latest = null; history.length = 0; render();
+    });
+    $('carrier').addEventListener('input', render);
+    window.addEventListener('resize', render);
+    render(); poll(); setInterval(poll, 200);
+  </script>
+</body>
+</html>
