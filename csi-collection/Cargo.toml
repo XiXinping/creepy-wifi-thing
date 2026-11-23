@@ -26,17 +26,22 @@ name    = "hello_test"
 [lib]
 test = false
 
+# Exactly one chip. Build a C5 with `cargo esp32c5 ...` (see .cargo/config.toml).
+[features]
+default = ["esp32c6"]
+esp32c5 = ["esp-alloc/esp32c5", "esp-csi-rs/esp32c5"]
+esp32c6 = ["esp-alloc/esp32c6", "esp-csi-rs/esp32c6"]
+
 [dependencies]
-esp-hal = { version = "~1.2.2", features = ["esp32c6", "unstable"] }
+esp-hal = { version = "~1.2.2", features = ["unstable"] }
 
 esp-rtos = { version = "0.4.0", features = [
   "embassy",
   "esp-alloc",
   "esp-radio",
-  "esp32c6",
 ] }
 
-esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6"] }
+esp-bootloader-esp-idf = "0.6.0"
 
 embassy-net = { version = "0.9.1", features = [
   "dhcpv4",
@@ -46,14 +51,13 @@ embassy-net = { version = "0.9.1", features = [
 ] }
 embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
-esp-alloc = { version = "0.11.0", features = ["esp32c6"] }
+esp-alloc = "0.11.0"
 rtt-target = "0.6.2"
 # for more networking protocol support see https://crates.io/crates/edge-net
 embassy-executor = { version = "0.10.0", features = [] }
 embassy-time = "0.5.0"
 esp-radio = { version = "1.0.0-beta.1", features = [
   "esp-alloc",
-  "esp32c6",
   "unstable",
   "wifi",
 ] }
@@ -72,7 +76,7 @@ smoltcp = { version = "0.14.0", default-features = false, features = [
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
-esp-csi-rs = { version = "0.13.0", features = ["async-print", "esp32c6"] }
+esp-csi-rs = { version = "0.13.0", features = ["async-print"] }
 esp-println = "0.18.0"
 esp-backtrace = "0.20.0"
 heapless = "0.9.4"
@@ -89,7 +93,8 @@ embedded-test = { version = "0.7.1", features = [
 [profile.dev]
 # The default debug profile is too slow and too big for resource-constrained devices.
 # Always build with some optimizations enabled.
-opt-level = "s"
+# esp-radio recommends 2 or 3: https://docs.espressif.com/projects/rust/esp-radio/0.16.0/esp32/esp_radio/index.html#:~:text=It%20is%20necessary%20to%20build%20with%20optimization%20level%202%20or%203%20since%20otherwise%2C%20it%20might%20not%20even%20be%20able%20to%20connect%20or%20advertise.
+opt-level = 3
 
 [profile.release]
 codegen-units = 1     # LLVM can perform better optimizations using a single thread

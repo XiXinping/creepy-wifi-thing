@@ -15,3 +15,11 @@ target = "riscv32imac-unknown-none-elf"
 
 [unstable]
 build-std = ["alloc", "core"]
+
+# The C5 and C6 share a target triple, so the C5 alias swaps the chip feature and the probe-rs chip.
+# Usage: `cargo esp32c5 --release --bin sniffer`. Plain `cargo run` stays on the C6.
+[alias]
+esp32c5 = [
+  "run", "--no-default-features", "--features", "esp32c5",
+  "--config", 'target.riscv32imac-unknown-none-elf.runner="probe-rs run --chip=esp32c5 --preverify --always-print-stacktrace --no-location"',
+]

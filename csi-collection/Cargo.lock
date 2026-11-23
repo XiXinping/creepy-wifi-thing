@@ -855,7 +855,7 @@ dependencies = [
  "esp32",
  "esp32c2",
  "esp32c3",
- "esp32c5",
+ "esp32c5 0.3.0",
  "esp32c6 0.24.0",
  "esp32c61",
  "esp32h2",
@@ -913,7 +913,9 @@ dependencies = [
  "esp-hal",
  "esp-metadata-generated",
  "esp-sync",
+ "esp-wifi-sys-esp32c5",
  "esp-wifi-sys-esp32c6",
+ "esp32c5 0.4.0",
  "esp32c6 0.25.0",
 ]
 
@@ -955,7 +957,9 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-rom-sys",
  "esp-sync",
+ "esp-wifi-sys-esp32c5",
  "esp-wifi-sys-esp32c6",
+ "esp32c5 0.4.0",
  "esp32c6 0.25.0",
  "heapless 0.9.4",
  "instability",
@@ -995,6 +999,7 @@ checksum = "e933ff78374b763b65998b64ad671b4890ed4ba13a80deff9f53afe95ede289d"
 dependencies = [
  "document-features",
  "esp-metadata-generated",
+ "esp32c5 0.3.0",
  "esp32c6 0.24.0",
 ]
 
@@ -1036,6 +1041,7 @@ dependencies = [
  "esp-metadata-generated",
  "esp-rom-sys",
  "esp-sync",
+ "esp32c5 0.3.0",
  "esp32c6 0.24.0",
 ]
 
@@ -1053,6 +1059,12 @@ dependencies = [
  "riscv",
  "xtensa-lx",
 ]
+
+[[package]]
+name = "esp-wifi-sys-esp32c5"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e025f203485a3ed0f00b2cb79bc86c6073d5ca11832507b3b474f33ef45a6ffa"
 
 [[package]]
 name = "esp-wifi-sys-esp32c6"
@@ -1092,6 +1104,15 @@ name = "esp32c5"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97afa80d8110c7234f840252baa8ee8de28f78e8dc233d2d430c0ccfbe59a2b5"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32c5"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6309dc0ad85475c03b0676054d924123782ffe2855082747ab12ad221497e0b"
 dependencies = [
  "vcell",
 ]
