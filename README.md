@@ -27,7 +27,7 @@ The XIAO uses the ESP32-C5's native USB Serial/JTAG connection for logging. The 
 
 ## Live amplitude GUI
 
-The local dashboard shows the latest CSI spectrum and a 60-second amplitude trace for a selected transmitter and CSI sample. It decodes the ESP32-C5's signed 12-bit I/Q samples; the older `ESP32-CSI-Tool` plotter assumes 8-bit samples and is unsuitable for this capture format.
+The local dashboard has a **Trend** view with the latest CSI spectrum and a 60-second amplitude trace for a selected transmitter and CSI sample. The **Heatmap** view shows every decoded sample over the same 60-second window, with packet time from left to right and sample index from top to bottom. It decodes the ESP32-C5's signed 12-bit I/Q samples; the older `ESP32-CSI-Tool` plotter assumes 8-bit samples and is unsuitable for this capture format.
 
 With either firmware flashed, stop any other serial monitor and run:
 
@@ -41,6 +41,8 @@ python3 -m venv .venv
 Open <http://127.0.0.1:8765/>. Change `--port` if the board appears under another serial device name. The server binds only to `127.0.0.1`. Press Ctrl+C in its terminal to stop it. For ESP32-C6 or older 8-bit CSI firmware, pass `--sample-format 8bit`.
 
 The slider's maximum follows the latest packet's decoded sample count. A 104-byte ESP32-C5 capture contains 26 complex I/Q values, indexed **0–25**. A different frame or capture format can have a different count. Sample 0 can be invalid on ESP32-C5 hardware, so start with sample 1 when comparing amplitude over time.
+
+The heatmap outlines up to five **potential motion channels**. For each sample, the GUI divides amplitude by the packet's median amplitude to reduce whole-packet gain changes. It compares the last 5 seconds with a baseline from 10–60 seconds ago, using median and median absolute deviation. A score of 3 or more highlights a recent shift or rise in variation. At least 12 baseline packets and 5 recent packets are required. Click a candidate to open its trend. These are CSI change candidates, not a verified motion detector: traffic, interference, a moving phone or other radio changes can also produce scores. For a useful baseline, keep the phone and board still during the first 10–20 seconds, then move in the space between them.
 
 ## Measure the iPhone hotspot ↔ XIAO link
 

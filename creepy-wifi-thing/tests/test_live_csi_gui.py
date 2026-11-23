@@ -29,6 +29,16 @@ class CsiDecodeTests(unittest.TestCase):
     def test_rejects_truncated_packet(self):
         self.assertIsNone(gui.parse_csi_line("CSI_DATA,STA"))
 
+    def test_snapshot_returns_every_packet_since_sequence(self):
+        state = gui.CsiState("c5-12bit")
+        sample = {"mac": "AA:BB:CC:DD:EE:FF", "role": "STA", "rssi": -55,
+                  "channel": 6, "amplitudes": [10, 20, 30]}
+        state.update(sample)
+        state.update({**sample, "amplitudes": [11, 21, 31]})
+        self.assertEqual([packet["seq"] for packet in state.snapshot()["packets"]], [1, 2])
+        self.assertEqual([packet["amplitudes"] for packet in state.snapshot(1)["packets"]],
+                         [[11, 21, 31]])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 """Live, local-only CSI amplitude dashboard for ESP32-C5 serial output."""
 
 import argparse
+from collections import deque
 import json
 import math
 import re
@@ -10,6 +11,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import serial
 
@@ -66,6 +68,7 @@ class CsiState:
         self.status = "Connecting to board…"
         self.sources = {}
         self.total = 0
+        self.history = deque(maxlen=2048)
 
     def update(self, sample):
         now = time.monotonic()
@@ -88,15 +91,25 @@ class CsiState:
                 "seen_at": now,
             }
             self.total += 1
+            self.history.append({
+                "seq": self.total,
+                "time": round(time.time() * 1000),
+                "mac": sample["mac"],
+                "amplitudes": sample["amplitudes"],
+            })
             self.status = "Receiving CSI"
 
-    def snapshot(self):
+    def snapshot(self, since=0):
         now = time.monotonic()
+        cutoff = round(time.time() * 1000) - 60000
         with self.lock:
+            while self.history and self.history[0]["time"] < cutoff:
+                self.history.popleft()
             return {
                 "status": self.status,
                 "format": self.sample_format,
                 "total": self.total,
+                "packets": [packet for packet in self.history if packet["seq"] > since],
                 "sources": [
                     {key: value for key, value in sample.items() if key not in ("rate_at", "rate_count", "seen_at")}
                     | {"age": round(now - sample["seen_at"], 1)}
@@ -126,11 +139,17 @@ def read_serial(port, baud, state):
 def make_handler(state):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/":
+            url = urlsplit(self.path)
+            if url.path == "/":
                 body = INDEX_HTML.read_bytes()
                 content_type = "text/html; charset=utf-8"
-            elif self.path == "/api/state":
-                body = json.dumps(state.snapshot()).encode("utf-8")
+            elif url.path == "/api/state":
+                try:
+                    since = max(0, int(parse_qs(url.query).get("since", ["0"])[0]))
+                except ValueError:
+                    self.send_error(400, "since must be an integer")
+                    return
+                body = json.dumps(state.snapshot(since)).encode("utf-8")
                 content_type = "application/json"
             else:
                 self.send_error(404)

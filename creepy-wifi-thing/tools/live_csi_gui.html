@@ -19,6 +19,12 @@
     select { border: 1px solid #35415a; border-radius: 8px; color: #e8edfb; background: #151e31; padding: 10px 13px; min-width: 290px; font: inherit; }
     input[type=range] { width: 215px; accent-color: #50d9c1; }
     .readout { font-size: 15px; color: #e8edfb; }
+    .view-switch { display: flex; gap: 4px; padding: 4px; border: 1px solid #35415a; border-radius: 9px; background: #151e31; }
+    .view-switch button, .candidate { border: 0; border-radius: 6px; color: #a3b0c9; background: transparent; cursor: pointer; font: inherit; }
+    .view-switch button { padding: 8px 13px; }
+    .view-switch button[aria-pressed=true] { background: #334864; color: #fff; }
+    .candidate { display: flex; justify-content: space-between; width: 100%; padding: 9px 11px; margin-top: 6px; text-align: left; background: #1b293b; color: #f5c17d; }
+    .candidate:hover { background: #2d3d50; }
     .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 17px; }
     .stat, .panel { background: #121b2d; border: 1px solid #27354c; border-radius: 13px; }
     .stat { padding: 15px 18px; }
@@ -28,9 +34,15 @@
     .panel { padding: 18px 20px 14px; min-width: 0; }
     .panel h2 { margin: 0 0 3px; font-size: 16px; }
     .panel p { margin: 0 0 14px; color: #90a1bf; font-size: 13px; }
+    .heatmap-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 17px; }
+    #heatmap { height: 450px; }
+    .heatmap-note { color: #90a1bf; font-size: 13px; }
+    .legend { height: 10px; width: 180px; margin: 10px 0; background: linear-gradient(90deg, #172c42, #237d91, #f5c17d, #f67854); border-radius: 4px; }
+    [hidden] { display: none !important; }
     canvas { width: 100%; height: 320px; display: block; }
     footer { color: #8e9dbb; margin-top: 18px; font-size: 13px; }
     @media (max-width: 850px) { .panels { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 850px) { .heatmap-layout { grid-template-columns: 1fr; } }
     @media (max-width: 520px) { header, main { padding-left: 16px; padding-right: 16px; } .stats { gap: 8px; } .stat .value { font-size: 20px; } select { min-width: 0; width: 100%; } }
   </style>
 </head>
@@ -43,6 +55,7 @@
     <div class="toolbar">
       <label>Transmitter<select id="source"><option value="">Waiting for packets…</option></select></label>
       <label>CSI sample <span class="readout" id="carrier-value">—</span><input id="carrier" type="range" min="0" max="0" value="0" disabled></label>
+      <div class="view-switch" role="group" aria-label="Chart view"><button id="trend-view" type="button" aria-pressed="true">Trend</button><button id="heatmap-view" type="button" aria-pressed="false">Heatmap</button></div>
     </div>
     <div class="stats">
       <div class="stat"><div class="label">Packets captured</div><div class="value" id="packets">0</div></div>
@@ -50,18 +63,124 @@
       <div class="stat"><div class="label">Latest RSSI</div><div class="value" id="rssi">—</div></div>
       <div class="stat"><div class="label">Channel</div><div class="value" id="channel">—</div></div>
     </div>
-    <div class="panels">
+    <div class="panels" id="trend-panels">
       <section class="panel"><h2>Amplitude over time</h2><p>Selected CSI sample · latest 60 seconds</p><canvas id="history"></canvas></section>
       <section class="panel"><h2>Current spectrum</h2><p>Latest packet · all decoded complex samples</p><canvas id="spectrum"></canvas></section>
     </div>
-    <footer>Amplitude is √(I² + Q²). The slider shows zero-based indices for the samples in the latest packet; the number varies with the capture format and frame. C5 capture uses signed 12-bit I/Q words. Its first complex sample may be invalid. The GUI only listens on this computer.</footer>
+    <div class="heatmap-layout" id="heatmap-panels" hidden>
+      <section class="panel"><h2>All CSI samples over time</h2><p>Each column is a received packet · newest at right · latest 60 seconds</p><canvas id="heatmap"></canvas><div class="legend"></div><span class="heatmap-note">Low → high amplitude. Orange outlined rows are recent change candidates.</span></section>
+      <section class="panel"><h2>Potential motion channels</h2><p>Recent normalized changes compared with the earlier baseline</p><div id="candidates" class="heatmap-note">Collecting a baseline…</div><p class="heatmap-note" style="margin-top:16px">Candidates indicate CSI changes, not confirmed motion. Moving devices, Wi-Fi traffic and radio noise can also change amplitude.</p></section>
+    </div>
+    <footer>Amplitude is √(I² + Q²). The slider shows zero-based indices for the samples in the latest packet; the number varies with the capture format and frame. C5 capture uses signed 12-bit I/Q words. Its first complex sample may be invalid and is excluded from change ranking. The GUI only listens on this computer.</footer>
   </main>
   <script>
     const $ = id => document.getElementById(id);
     const history = [];
-    let lastCount = -1;
+    let lastSequence = 0;
     let latest = null;
     let selectedMac = '';
+    let sampleFormat = 'c5-12bit';
+    let view = 'trend';
+    let polling = false;
+
+    function median(values) {
+      if (!values.length) return 0;
+      const sorted = [...values].sort((a, b) => a - b);
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+    }
+
+    function motionCandidates(packets, count, format, now) {
+      const first = format === 'c5-12bit' ? 1 : 0;
+      const baseline = packets.filter(p => p.time >= now - 60000 && p.time < now - 10000 && p.amplitudes.length === count);
+      const recent = packets.filter(p => p.time >= now - 5000 && p.amplitudes.length === count);
+      if (baseline.length < 12 || recent.length < 5) return {ready: false, candidates: []};
+      const normalize = packet => {
+        const gain = Math.max(median(packet.amplitudes.slice(first)), 1);
+        return packet.amplitudes.map(value => value / gain);
+      };
+      const oldValues = baseline.map(normalize), newValues = recent.map(normalize);
+      const candidates = [];
+      for (let index = first; index < count; index++) {
+        const old = oldValues.map(row => row[index]), current = newValues.map(row => row[index]);
+        const center = median(old), oldNoise = 1.4826 * median(old.map(value => Math.abs(value - center)));
+        const newCenter = median(current), newNoise = 1.4826 * median(current.map(value => Math.abs(value - newCenter)));
+        const scale = Math.max(oldNoise, 0.04);
+        const score = Math.max(Math.abs(newCenter - center) / scale, Math.max(0, newNoise - oldNoise) / scale);
+        if (score >= 3) candidates.push({index, score});
+      }
+      candidates.sort((a, b) => b.score - a.score);
+      return {ready: true, candidates: candidates.slice(0, 5)};
+    }
+
+    function heatColor(value, max) {
+      const level = Math.max(0, Math.min(1, value / max));
+      const stops = [[23, 44, 66], [35, 125, 145], [245, 193, 125], [246, 120, 84]];
+      const position = Math.min(2, Math.floor(level * 3)), mix = level * 3 - position;
+      const rgb = stops[position].map((start, i) => Math.round(start + (stops[position + 1][i] - start) * mix));
+      return `rgb(${rgb.join(',')})`;
+    }
+
+    function drawHeatmap(packets, count, candidates, now) {
+      const canvas = $('heatmap'), {ctx, width, height} = prepare(canvas);
+      const left = 44, right = 16, top = 16, bottom = 35;
+      const w = Math.max(1, width - left - right), h = Math.max(1, height - top - bottom);
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#0d1727'; ctx.fillRect(left, top, w, h);
+      ctx.font = '12px ui-sans-serif, sans-serif'; ctx.fillStyle = '#9aabc6';
+      if (!count || !packets.length) {
+        ctx.fillText('Waiting for CSI samples…', left + 12, top + h / 2);
+        return;
+      }
+      const allValues = packets.flatMap(packet => packet.amplitudes);
+      const sorted = allValues.sort((a, b) => a - b);
+      const max = Math.max(1, sorted[Math.floor(sorted.length * 0.95)] || 1);
+      const rowHeight = h / count, columnWidth = Math.max(2, w / Math.max(packets.length, 1));
+      for (const packet of packets) {
+        const x = left + w * (1 - (now - packet.time) / 60000);
+        if (x < left || x > left + w) continue;
+        packet.amplitudes.forEach((value, index) => {
+          if (index >= count) return;
+          ctx.fillStyle = heatColor(value, max);
+          ctx.fillRect(x, top + index * rowHeight, columnWidth, Math.ceil(rowHeight));
+        });
+      }
+      ctx.strokeStyle = '#f5c17d'; ctx.lineWidth = 1.5;
+      for (const candidate of candidates) ctx.strokeRect(left, top + candidate.index * rowHeight, w, rowHeight);
+      ctx.fillStyle = '#9aabc6';
+      for (const index of new Set([0, Math.floor(count / 4), Math.floor(count / 2), Math.floor(count * 3 / 4), count - 1])) {
+        ctx.fillText(String(index), 7, top + (index + 0.5) * rowHeight + 4);
+      }
+      ctx.fillText('60s ago', left, height - 11);
+      ctx.fillText('Now', left + w - 26, height - 11);
+    }
+
+    function renderCandidates(analysis) {
+      const container = $('candidates');
+      container.replaceChildren();
+      if (!analysis.ready) {
+        container.textContent = 'Collecting baseline: at least 12 earlier and 5 recent packets are needed.';
+      } else if (!analysis.candidates.length) {
+        container.textContent = 'No strong sample changes in the last 5 seconds.';
+      } else {
+        for (const {index, score} of analysis.candidates) {
+          const button = document.createElement('button');
+          button.className = 'candidate'; button.type = 'button';
+          button.textContent = `Sample ${index}  ·  change ${score.toFixed(1)}×`;
+          button.addEventListener('click', () => { $('carrier').value = index; setView('trend'); render(); });
+          container.append(button);
+        }
+      }
+    }
+
+    function setView(next) {
+      view = next;
+      $('trend-panels').hidden = next !== 'trend';
+      $('heatmap-panels').hidden = next !== 'heatmap';
+      $('trend-view').setAttribute('aria-pressed', next === 'trend');
+      $('heatmap-view').setAttribute('aria-pressed', next === 'heatmap');
+      render();
+    }
 
     function prepare(canvas) {
       const ratio = window.devicePixelRatio || 1;
@@ -108,15 +227,29 @@
       $('carrier-value').textContent = latest ? `${carrier} / ${latest.amplitudes.length - 1} (${latest.amplitudes.length} samples)` : '—';
       const now = Date.now();
       while (history.length && history[0].time < now - 60000) history.shift();
-      draw($('history'), history.map(p => ({x: Math.max(0, 1 - (now - p.time) / 60000), value: p.amplitudes[carrier] || 0})), '#54ddc5');
+      const packets = history.filter(p => p.mac === selectedMac);
       const amps = latest?.amplitudes || [];
-      draw($('spectrum'), amps.map((value, i) => ({x: amps.length > 1 ? i / (amps.length - 1) : 0, value})), '#83aaff');
+      if (view === 'trend') {
+        draw($('history'), packets.map(p => ({x: Math.max(0, 1 - (now - p.time) / 60000), value: p.amplitudes[carrier] || 0})), '#54ddc5');
+        draw($('spectrum'), amps.map((value, i) => ({x: amps.length > 1 ? i / (amps.length - 1) : 0, value})), '#83aaff');
+      } else {
+        const analysis = motionCandidates(packets, amps.length, sampleFormat, now);
+        drawHeatmap(packets, amps.length, analysis.candidates, now);
+        renderCandidates(analysis);
+      }
     }
 
     async function poll() {
+      if (polling) return;
+      polling = true;
       try {
-        const response = await fetch('/api/state', {cache: 'no-store'});
+        const response = await fetch(`/api/state?since=${lastSequence}`, {cache: 'no-store'});
         const data = await response.json();
+        if (data.total < lastSequence) { history.length = 0; lastSequence = 0; }
+        sampleFormat = data.format;
+        for (const packet of data.packets) {
+          if (packet.seq > lastSequence) { history.push(packet); lastSequence = packet.seq; }
+        }
         $('status').textContent = data.status;
         $('packets').textContent = data.total.toLocaleString();
         const sources = data.sources.sort((a, b) => b.count - a.count);
@@ -142,10 +275,6 @@
           $('carrier').disabled = source.amplitudes.length < 2;
           if (Number($('carrier').value) > Number($('carrier').max)) $('carrier').value = $('carrier').max;
           latest = source;
-          if (lastCount !== source.count) {
-            history.push({time: Date.now(), amplitudes: source.amplitudes});
-            lastCount = source.count;
-          }
         } else {
           latest = null;
           $('carrier').disabled = true;
@@ -153,13 +282,17 @@
         render();
       } catch (error) {
         $('status').textContent = `GUI server unavailable: ${error.message}`;
+      } finally {
+        polling = false;
       }
     }
 
     $('source').addEventListener('change', event => {
-      selectedMac = event.target.value; lastCount = -1; latest = null; history.length = 0; render();
+      selectedMac = event.target.value; latest = null; render();
     });
     $('carrier').addEventListener('input', render);
+    $('trend-view').addEventListener('click', () => setView('trend'));
+    $('heatmap-view').addEventListener('click', () => setView('heatmap'));
     window.addEventListener('resize', render);
     render(); poll(); setInterval(poll, 200);
   </script>
