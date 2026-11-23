@@ -285,18 +285,22 @@
         $('packets').textContent = data.total.toLocaleString();
         const sources = data.sources.sort((a, b) => b.count - a.count);
         const list = $('source');
-        const oldChoices = [...list.options].map(o => o.value).join('|');
-        const newChoices = sources.map(s => s.mac).join('|');
-        if (oldChoices !== newChoices) {
-          list.replaceChildren();
-          if (!sources.length) list.add(new Option('Waiting for packets…', ''));
-          sources.forEach(s => list.add(new Option(`${s.mac} · ${s.role} · ${s.count.toLocaleString()} packets`, s.mac)));
-          if (sources.some(s => s.mac === selectedMac)) list.value = selectedMac;
-        } else {
-          sources.forEach((s, i) => { list.options[i].textContent = `${s.mac} · ${s.role} · ${s.count.toLocaleString()} packets`; });
+        const focused = document.activeElement === list;
+        const byMac = new Map(sources.map(source => [source.mac, source]));
+        // Keep option text and order still while the native menu is open.
+        if (!focused) {
+          const existing = [...list.options].map(option => option.value).filter(mac => byMac.has(mac));
+          const order = [...existing, ...sources.map(source => source.mac).filter(mac => !existing.includes(mac))];
+          const current = [...list.options].map(option => option.value);
+          const desired = order.length ? order : [''];
+          if (current.length !== desired.length || current.some((mac, index) => mac !== desired[index])) {
+            list.replaceChildren();
+            if (!order.length) list.add(new Option('Waiting for packets…', ''));
+            for (const mac of order) list.add(new Option(`${mac} · ${byMac.get(mac).role}`, mac));
+          }
         }
-        if (!selectedMac || !sources.some(s => s.mac === selectedMac)) selectedMac = sources[0]?.mac || '';
-        list.value = selectedMac;
+        if (!focused && (!selectedMac || !byMac.has(selectedMac))) selectedMac = sources[0]?.mac || '';
+        if (!focused && list.value !== selectedMac) list.value = selectedMac;
         const source = sources.find(s => s.mac === selectedMac);
         if (source) {
           $('rate').textContent = `${source.rate}/s`;
