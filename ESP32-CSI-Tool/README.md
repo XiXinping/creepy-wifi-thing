@@ -1,5 +1,7 @@
 # ESP32 CSI Tool
 
+> **XIAO ESP32-C5 and live GUI:** The ESP-IDF v4.3 `passive` project documented below is for the original ESP32. For the XIAO ESP32-C5, use the [Rust `sniffer` firmware and live GUI](../README.md#live-gui) in this repository. The sniffer listens on its configured channel without joining a network or using a password. Stop any serial monitor before starting the GUI; only one process can read the board's serial port at a time.
+
 [ESP32 CSI Tool Website](https://stevenmhernandez.github.io/ESP32-CSI-Tool/)
 
 The purpose of this project is to allow for the collection of Channel State Information (CSI) from the ESP32 Wi-Fi enabled microcontroller. 
