@@ -60,19 +60,6 @@ const CHANNEL: u8 = 7;
 /// `Ht20`, `Ht40Above` or `Ht40Below`. HT40 roughly doubles the subcarriers.
 const PHY: EmitterPhy = EmitterPhy::Ht20;
 
-/// Force HE20 (802.11ax) instead of `PHY`. ESP32-C5 / C6 only; ignored elsewhere.
-const HE20: bool = false;
-
-fn phy() -> EmitterPhy {
-    #[cfg(any(feature = "esp32c5", feature = "esp32c6"))]
-    if HE20 {
-        return EmitterPhy::He20;
-    }
-    let _ = HE20;
-    PHY
-}
-
-/// Delay between injected frames. 1 ms is ~5000 frames/s.
 const PERIOD: Duration = Duration::from_millis(1);
 
 /// Address a specific receiver instead of broadcasting. Broadcast is the default; unicasting to
@@ -102,7 +89,7 @@ async fn main(spawner: Spawner) -> ! {
         .expect("Failed to initialize Wi-Fi controller");
     let controller = WIFI_CONTROLLER.init(wifi_controller);
 
-    let mut emitter = EmitterConfig::new(CHANNEL, phy()).with_period(PERIOD);
+    let mut emitter = EmitterConfig::new(CHANNEL, PHY).with_period(PERIOD);
     if let Some(mac) = DST_MAC {
         emitter = emitter.with_dst_mac(mac);
     }

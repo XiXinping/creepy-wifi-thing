@@ -14,6 +14,11 @@ name = "sniffer"
 path = "./src/bin/sniffer.rs"
 test = false
 
+[[bin]]
+name = "station"
+path = "./src/bin/station.rs"
+test = false
+
 [[test]]
 harness = false
 name    = "hello_test"

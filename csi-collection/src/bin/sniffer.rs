@@ -224,13 +224,10 @@ async fn main(spawner: Spawner) -> ! {
         Reporting::Decimate(n) => sniffer = sniffer.with_decimation(n),
         _ => {}
     }
+
     let setup = MeasurementSetup::new().acquisition(csi_config());
     let mut node = CsiNode::sniffer(sniffer, setup, hardware);
-    node.set_protocol(if HE20 {
-        esp_radio::wifi::Protocol::AX
-    } else {
-        esp_radio::wifi::Protocol::N
-    });
+    node.set_protocol(esp_radio::wifi::Protocol::N);
 
     set_csi_callback(on_csi);
     let _ = &mut node_handle;
