@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-csi_to_csv.py – Read CSI data from a USB serial device, timestamp each
+serial_to_csv.py – Read CSI_DATA from a USB serial port, timestamp each
 packet, and write it to a CSV file.
 
-Each CSI_DATA line gets a trailing timestamp column appended (same pattern
-as the reference `serial_append_timestamp.py` utility):
+Two scheduling options:
 
-    CSI_DATA,v1,v2,v3,...  →  v1,v2,v3,...,1718900123.456
+    --start-delay SEC   Sleep before opening the port. Lets the device
+                        power up / associate / emit flash output so that
+                        the first CSI_DATA line you capture is "clean".
+                        Default 0 (no delay).
+
+    --duration SEC      Stop collecting after this many seconds. The
+                        timer starts on the first CSI_DATA packet you
+                        write, not at program launch. Pass 0 to run
+                        indefinitely. Default 30.
 """
 
 import sys
 import argparse
 import csv
-import serial
 import time
 
 
@@ -20,48 +26,47 @@ import time
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Read CSI data from USB serial, timestamp it, write CSV."
+    p = argparse.ArgumentParser(
+        description="Capture CSI_DATA from a serial port into a CSV."
     )
-    parser.add_argument(
-        "serial_port",
-        help="USB serial port (e.g. /dev/ttyUSB0 or COM3)",
+    p.add_argument("serial_port", help="e.g. /dev/ttyUSB0 or COM3")
+    p.add_argument("output_csv", help="Output CSV file name")
+    p.add_argument("--baud", type=int, default=115200)
+    p.add_argument(
+        "--timeout", type=float, default=1.0, help="Serial read timeout in seconds"
     )
-    parser.add_argument(
-        "output_csv",
-        help="Output CSV file name",
-    )
-    parser.add_argument(
-        "--baud",
-        type=int,
-        default=115200,
-        help="Baud rate (default: 115200)",
-    )
-    parser.add_argument(
-        "--timeout",
+    p.add_argument(
+        "--start-delay",
         type=float,
-        default=1.0,
-        help="Serial read timeout in seconds (default: 1.0)",
+        default=0.0,
+        metavar="SEC",
+        help="Sleep this long after opening the port, then flush "
+        "the input buffer, before starting capture "
+        "(default 0)",
     )
-    parser.add_argument(
+    p.add_argument(
+        "--duration",
+        type=float,
+        default=30.0,
+        metavar="SEC",
+        help="Stop after this many seconds of active capture. "
+        "0 = run forever (default 30)",
+    )
+    p.add_argument(
         "--print-every",
         type=int,
         default=100,
-        help="Print packet count every N packets (default: 100). 0 = off.",
+        help="Print a progress line every N packets (0 = off)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--no-timestamp",
         action="store_true",
-        default=False,
-        help="Do NOT append a Unix timestamp to each CSI line",
+        help="Do not append a Unix timestamp column",
     )
-    parser.add_argument(
-        "--header",
-        action="store_true",
-        default=False,
-        help="Write a header row (fields...,timestamp) at the top of the CSV",
+    p.add_argument(
+        "--header", action="store_true", help="Write a header row at the top of the CSV"
     )
-    return parser.parse_args()
+    return p.parse_args()
 
 
 # ── Serial helpers ───────────────────────────────────────────────────────────
@@ -69,146 +74,118 @@ def parse_args():
 
 def open_serial(port, baud, timeout):
     try:
-        ser = serial.Serial(port, baudrate=baud, timeout=timeout)
-        return ser
+        import serial
+    except ImportError:
+        raise SystemExit("pyserial not installed (pip install pyserial)")
+    try:
+        return serial.Serial(port, baudrate=baud, timeout=timeout)
     except serial.SerialException as e:
-        print(f"Error opening serial port '{port}': {e}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(f"Error opening '{port}': {e}")
 
 
-def readline(ser):
-    """
-    Read one line from the serial port, ignoring transient errors.
-    """
+def read_line(ser):
+    """Read one line from the serial port, ignoring transient errors."""
     while True:
         try:
             raw = ser.readline()
             if raw:
                 return raw.decode("utf-8", errors="replace").strip()
             return ""
-        except serial.SerialException:
-            pass
         except Exception:
             pass
 
 
-def process_until_first_csi_line(ser, should_print):
-    """
-    Consume flash / debug lines until the first CSI_DATA line arrives.
-    Returns that first CSI_DATA line.
-    """
-    if should_print:
-        print("Printing Flash information", file=sys.stderr)
+def skip_until_first_csi(ser):
+    """Consume flash/debug output until the first CSI_DATA line arrives."""
+    print("Waiting for first CSI_DATA line …", file=sys.stderr)
     while True:
-        line = readline(ser)
-        if "CSI_DATA" not in line:
-            if line != "" and should_print:
-                print(line, file=sys.stderr)
-        else:
-            break
-    return line
-
-
-def ignore_until_first_csi_line(ser):
-    return process_until_first_csi_line(ser, should_print=False)
-
-
-def print_until_first_csi_line(ser):
-    return process_until_first_csi_line(ser, should_print=True)
+        line = read_line(ser)
+        if "CSI_DATA" in line:
+            return line
 
 
 # ── CSV writing ──────────────────────────────────────────────────────────────
 
 
-def write_csi_to_csv(ser, first_csi_line, csv_path, args):
-    """
-    Write the first (and all subsequent) CSI_DATA lines to `csv_path`.
-    Each line is parsed after the "CSI_DATA" tag, comma-split, and
-    optionally appended with a Unix timestamp.
-    """
-    print(f"Writing CSI data to '{csv_path}' … (Ctrl-C to stop)", file=sys.stderr)
-
-    packet_count = 0
-    start_time = time.time()
-    add_ts = not args.no_timestamp
-
-    with open(csv_path, mode="w", newline="") as f:
-        writer = csv.writer(f)
-
-        # ── optional header row ──
-        if args.header:
-            # We don't know the field count yet; use a generic label.
-            # The caller can rename later, or set --header off.
-            # We'll fill it in after the first line is parsed.
-            pass  # handled below after first parse
-
-        # ── first CSI line (already captured) ──
-        fields = _parse_csi(first_csi_line)
-        if fields is None:
-            print("First CSI line could not be parsed.", file=sys.stderr)
-            return 0
-
-        if args.header:
-            header = [f"f{i}" for i in range(len(fields))]
-            if add_ts:
-                header.append("timestamp")
-            writer.writerow(header)
-
-        _write_row(writer, fields, add_ts)
-        packet_count += 1
-
-        if args.print_every:
-            print(f"  Packets received: {packet_count}", file=sys.stderr)
-
-        # ── streaming loop ──
-        while True:
-            line = readline(ser)
-            if line == "":
-                continue
-            if "CSI_DATA" not in line:
-                continue
-
-            fields = _parse_csi(line)
-            if fields is None:
-                continue
-
-            _write_row(writer, fields, add_ts)
-            packet_count += 1
-
-            if args.print_every and packet_count % args.print_every == 0:
-                elapsed = time.time() - start_time
-                rate = packet_count / elapsed if elapsed > 0 else 0
-                print(
-                    f"  Packets received: {packet_count}  "
-                    f"({rate:.1f} pkt/s, elapsed {elapsed:.1f}s)",
-                    file=sys.stderr,
-                )
-
-    return packet_count
-
-
-# ── tiny helpers ─────────────────────────────────────────────────────────────
-
-
-def _parse_csi(line):
-    """
-    Strip the leading "CSI_DATA" tag and split on commas.
-    Returns a list of raw value strings, or None on failure.
-    """
+def parse_csi_payload(line):
+    """Strip the CSI_DATA tag and split on commas."""
     try:
         _, payload = line.split("CSI_DATA", 1)
-        return payload.strip().split(",")
+        return [f.strip() for f in payload.strip().split(",")]
     except ValueError:
         return None
 
 
-def _write_row(writer, fields, add_timestamp):
-    """
-    Write one row; optionally append the current Unix timestamp.
-    """
+def write_row(writer, fields, add_timestamp):
     if add_timestamp:
-        fields = fields + [str(time.time())]
+        fields = fields + [f"{time.time():.3f}"]
     writer.writerow(fields)
+
+
+def capture_loop(ser, first_line, csv_path, args):
+    """
+    Write every CSI_DATA line (starting with first_line) to csv_path.
+    Stops when --duration expires or the serial stream ends.
+    """
+    add_ts = not args.no_timestamp
+    started = time.monotonic()
+    deadline = None if args.duration <= 0 else started + args.duration
+    total = 0
+    pkt_per_period = 0
+
+    with open(csv_path, mode="w", newline="") as f:
+        w = csv.writer(f)
+
+        # first payload
+        fields = parse_csi_payload(first_line)
+        if fields is None:
+            print("First CSI line unparseable.", file=sys.stderr)
+            return 0
+
+        if args.header:
+            head = [f"c{i}" for i in range(len(fields))]
+            if add_ts:
+                head.append("timestamp")
+            w.writerow(head)
+
+        write_row(w, fields, add_ts)
+        total += 1
+        pkt_per_period += 1
+
+        while True:
+            line = read_line(ser)
+            if line == "":
+                # serial timeout — check whether we've hit the deadline
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+                continue
+            if "CSI_DATA" not in line:
+                continue
+
+            fields = parse_csi_payload(line)
+            if fields is None:
+                continue
+
+            write_row(w, fields, add_ts)
+            total += 1
+            pkt_per_period += 1
+
+            if args.print_every and total % args.print_every == 0:
+                elapsed = time.monotonic() - started
+                remaining = (deadline - time.monotonic()) if deadline else -1
+                rate = total / elapsed if elapsed > 0 else 0
+                rem_str = f", {remaining:5.1f}s left" if deadline else ""
+                print(
+                    f"  {total:>6d} pkts  ({rate:5.1f}/s, "
+                    f"elapsed {elapsed:5.1f}s{rem_str})",
+                    file=sys.stderr,
+                )
+                pkt_per_period = 0
+
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+
+    return total
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -217,22 +194,47 @@ def _write_row(writer, fields, add_timestamp):
 def main():
     args = parse_args()
 
+    if args.start_delay > 0:
+        print(
+            f"Sleeping {args.start_delay:.1f}s (device boot / settle) …",
+            file=sys.stderr,
+        )
+        time.sleep(args.start_delay)
+
     ser = open_serial(args.serial_port, args.baud, args.timeout)
 
+    if args.start_delay > 0:
+        # discard anything that piled up during the sleep
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+
     try:
-        first_csi_line = ignore_until_first_csi_line(ser)
-        # first_csi_line = print_until_first_csi_line(ser)
+        first = skip_until_first_csi(ser)
 
-        total = write_csi_to_csv(ser, first_csi_line, args.output_csv, args)
+        if args.duration > 0:
+            print(
+                f"Capturing for {args.duration:.1f}s (Ctrl-C to stop early) …",
+                file=sys.stderr,
+            )
+        else:
+            print("Capturing until Ctrl-C …", file=sys.stderr)
 
-    except KeyboardInterrupt:
-        print("\nInterrupted by user.", file=sys.stderr)
-        total = 0
+        try:
+            total = capture_loop(ser, first, args.output_csv, args)
+        except KeyboardInterrupt:
+            print("\nInterrupted.", file=sys.stderr)
+            total = 0  # overwritten below by file count
+
     finally:
         ser.close()
-        print("Serial port closed.", file=sys.stderr)
 
-    print(f"Total CSI packets written to '{args.output_csv}': {total}", file=sys.stderr)
+    # count what actually landed on disk (covers the Ctrl-C case)
+    with open(args.output_csv) as f:
+        n = sum(1 for _ in f) - (1 if args.header else 0)
+
+    print(f"Done. Wrote {n} packets to '{args.output_csv}'.", file=sys.stderr)
 
 
 if __name__ == "__main__":
