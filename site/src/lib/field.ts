@@ -9,6 +9,8 @@ uniform vec4 uClip;         // visible region, m: x0, y0, x1, y1 (screen-wide in
 uniform vec3 uSrc[${MAX_SOURCES}]; // x, y, gain
 uniform vec3 uScat[${SCAT_SOURCES}]; // the body re-radiating what reaches it from tx, and its wall images: x, y, amplitude
 uniform float uScatLag;     // k·|tx−body|: the wave reaches the body before it re-radiates
+uniform vec3 uBall;         // x, y, radius of the ball: the direct wave is shadowed behind it
+uniform float uShadow;      // share of the direct wave left in that shadow (1: no ball)
 uniform int uN;
 uniform float uK;           // 2π/λ
 uniform float uPhase;       // ωt
@@ -29,6 +31,14 @@ void main() {
     if (i >= uN) break;
     float d = max(distance(p, uSrc[i].xy), 0.05);
     float a = uSrc[i].z * inversesqrt(d);
+    if (i == 0) {
+      // physics.ts clearance(): does the straight line tx→p run through the ball?
+      vec2 s = uSrc[0].xy;
+      vec2 dp = p - s;
+      float t = clamp(dot(uBall.xy - s, dp) / max(dot(dp, dp), 1e-6), 0.0, 1.0);
+      float m = distance(s + t * dp, uBall.xy);
+      a *= mix(uShadow, 1.0, smoothstep(uBall.z - 0.03, uBall.z + 0.03, m));
+    }
     float ph = uK * d - uPhase;
     re += a * cos(ph);
     im += a * sin(ph);

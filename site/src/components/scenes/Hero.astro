@@ -3,14 +3,15 @@ import Slot from "../Slot.astro";
 import { frames } from "../../lib/renders";
 ---
 
-<section class="pin hero" id="hero" data-frames={JSON.stringify(frames("hero"))}>
+<section
+  class="pin hero"
+  id="hero"
+  data-frames={JSON.stringify(frames("hero"))}
+>
   <div class="stage">
-    <h1>Lorem ipsum</h1>
+    <h1>CSIspy</h1>
     <canvas aria-hidden="true"></canvas>
-    <Slot
-      class="lede"
-      body="Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
-    />
+    <Slot class="lede" body="By Maddy, Mori, and Owen" />
   </div>
 </section>
 
@@ -22,21 +23,29 @@ import { frames } from "../../lib/renders";
   h1 {
     position: absolute;
     inset: 0;
+    z-index: 1;
     display: grid;
     place-items: center;
     text-align: center;
     padding: 0 var(--gutter);
     font-size: clamp(4.5rem, 19vw, 21rem);
-    font-weight: 400;
+    /* difference over the render: warm over the blue floor, light over the dark PCB, dark over the white
+       highlights; the heavier weight keeps the strokes thick enough to survive the colour changes */
+    font-weight: 600;
     line-height: 0.82;
     letter-spacing: -0.02em;
-    /* the rendered floor is a mid blue, so wash alone barely separates from it */
-    color: color-mix(in srgb, var(--bloom) 75%, var(--wash));
+    color: var(--bloom);
+    mix-blend-mode: difference;
+    pointer-events: none;
   }
 
-  /* opaque frames: lighten lets the type show through the dark floor and PCB, hidden by the bright board */
-  canvas {
-    mix-blend-mode: lighten;
+  /* the title already reads over the render; no dark pool behind the byline */
+  .hero :global(.lede) {
+    text-shadow: none;
+    background: none;
+  }
+  .hero :global(.lede)::before {
+    content: none;
   }
 
   @media (orientation: portrait) {

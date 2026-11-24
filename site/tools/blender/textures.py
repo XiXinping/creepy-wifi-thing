@@ -99,20 +99,31 @@ def silk():
 
     f = font("Montserrat-Medium.otf", 1.0)
     # letters sit beside the parts they name, rotated like the label (text-up = +x)
-    for s, (bx, by) in (("R", (-10.75, 7.05)), ("B", (-10.75, -6.35)), ("L", (8.0, -6.0))):
+    for s, (bx, by) in (("R", (-10.9, 7.85)), ("B", (-10.75, -6.35)), ("L", (6.9, -6.0))):  # glyph top-left corners
         glyph = Image.new("RGBA", (mm(1.2), mm(1.2)), (0, 0, 0, 0))
         ImageDraw.Draw(glyph).text((mm(0.15), -mm(0.05)), s, font=f, fill=white)
         glyph = glyph.rotate(-90, expand=True)  # CW: text-up -> board +x, reading -> board -y
         x, y = at(bx, by)
         im.alpha_composite(glyph, (mm(x), mm(y)))
     # LED courtyard outline next to the USB-C
-    x0, y0 = at(8.55, -5.25)
-    x1, y1 = at(10.0, -6.35)
+    x0, y0 = at(8.1, -5.95)
+    x1, y1 = at(9.6, -6.95)
     d.rectangle([mm(x0), mm(y0), mm(x1), mm(y1)], outline=white, width=mm(0.12))
     im.save(ASSETS / "silk.png")
+
+
+def fpc():
+    """White print on the 40 x 20 mm FPC antenna, measured off Seeed's top-down product photo (cable exits right)."""
+    im = Image.new("RGBA", (mm(40), mm(20)), (255, 255, 255, 0))
+    d = ImageDraw.Draw(im)
+    white = (240, 240, 244, 255)
+    text_box(d, (10.1, 2.0, 30.3, 4.4), "seeed studio", font("Montserrat-Bold.otf", 3.0), white)
+    text_box(d, (8.6, 16.7, 31.8, 18.2), "seeedstudio.com   2.4G  A-01", font("Montserrat-Medium.otf", 1.6), white)
+    im.save(ASSETS / "fpc.png")
 
 
 if __name__ == "__main__":
     label()
     silk()
-    print("wrote", ASSETS / "label.png", ASSETS / "silk.png")
+    fpc()
+    print("wrote", ASSETS / "label.png", ASSETS / "silk.png", ASSETS / "fpc.png")

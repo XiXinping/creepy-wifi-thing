@@ -7,8 +7,8 @@ import Slot from "../Slot.astro";
     <canvas aria-hidden="true"></canvas>
     <Slot
       class="side"
-      title="Ut enim ad minim"
-      body="Nullam quis risus eget urna mollis ornare vel eu leo. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed posuere consectetur est at lobortis, vestibulum id ligula porta felis euismod semper."
+      title="Measuring deviations"
+      body="As objects move between Fresnel zones, the amplitude changes rapidly across many frequencies. We can take a rolling average of recent amplitudes, comparing new samples as they come in. We've marked outliers in gold, which represent sudden spikes."
     />
   </div>
 </section>
@@ -28,7 +28,9 @@ import Slot from "../Slot.astro";
   const root = document.getElementById("motion")!;
   const canvas = root.querySelector("canvas")!;
   const ctx = canvas.getContext("2d")!;
-  const [deep, wash, bloom, enig] = ["deep", "wash", "bloom", "enig"].map(token);
+  const [deep, wash, bloom, enig] = ["deep", "wash", "bloom", "enig"].map(
+    token,
+  );
   const RATE = 20; // Hz, csi.json rateHz
   const WINDOW = 10 * RATE;
 
@@ -48,7 +50,12 @@ import Slot from "../Slot.astro";
     for (let t = 0; t < r.frames; t++)
       for (let k = 0; k < K; k++) {
         const i = t * K + k;
-        let col = ramp(deep, wash, bloom, clamp01(0.5 + (r.amp[i] - mean[k]) / 70));
+        let col = ramp(
+          deep,
+          wash,
+          bloom,
+          clamp01(0.5 + (r.amp[i] - mean[k]) / 70),
+        );
         if (quiet) {
           const u = clamp01((r.var[i] / quiet[k] - 1) / 0.4);
           col = mix(col, enig, u * u * (3 - 2 * u));
@@ -61,7 +68,10 @@ import Slot from "../Slot.astro";
 
   let tiles: HTMLCanvasElement[] = [];
   loadCsi().then(({ recs }) => {
-    tiles = [waterfall(recs.empty), waterfall(recs.motion, baseline(recs.empty.var))];
+    tiles = [
+      waterfall(recs.empty),
+      waterfall(recs.motion, baseline(recs.empty.var)),
+    ];
   });
 
   let last = "";
@@ -80,12 +90,28 @@ import Slot from "../Slot.astro";
     const frames = tiles[0].width;
     const start = p * (frames - WINDOW);
     ctx.imageSmoothingEnabled = false;
-    tiles.forEach((tile, i) => ctx.drawImage(tile, start, 0, WINDOW, K, r.x, r.y + i * (ph + gap), r.w, ph));
+    tiles.forEach((tile, i) =>
+      ctx.drawImage(
+        tile,
+        start,
+        0,
+        WINDOW,
+        K,
+        r.x,
+        r.y + i * (ph + gap),
+        r.w,
+        ph,
+      ),
+    );
 
     // one tick per second under each panel, travelling with the window
     ctx.strokeStyle = css(wash, 0.6);
     ctx.lineWidth = 1;
-    for (let f = Math.ceil(start / RATE) * RATE; f <= start + WINDOW; f += RATE) {
+    for (
+      let f = Math.ceil(start / RATE) * RATE;
+      f <= start + WINDOW;
+      f += RATE
+    ) {
       const x = r.x + ((f - start) / WINDOW) * r.w;
       for (let i = 0; i < 2; i++) {
         const y = r.y + i * (ph + gap) + ph;

@@ -7,10 +7,12 @@ interface Props {
   [attr: `data-${string}`]: string | number;
 }
 const { title, body, class: cls, ...attrs } = Astro.props;
+// [text](url) in the copy becomes a link: split gives text, label, url, text, label, url, ...
+const parts = body.split(/\[([^\]]+)\]\(([^)\s]+)\)/);
 ---
 
 <div class:list={["slot", cls]} {...attrs}>
   {title && <h2>{title}</h2>}
-  <p>{body}</p>
+  <p>{parts.map((s, i) => (i % 3 === 1 ? <a href={parts[i + 1]}>{s}</a> : i % 3 === 0 && s))}</p>
   <slot />
 </div>

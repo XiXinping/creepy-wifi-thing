@@ -26,6 +26,8 @@ vt = a[10] if len(a) > 10 else "AgX"
 scene.view_settings.view_transform = vt
 scene.view_settings.look = "AgX - Punchy" if vt == "AgX" else "None"
 
+for o in bpy.data.objects["antenna"].children_recursive:  # the product photo has none
+    o.hide_render = True
 floor = bpy.data.objects["floor"]
 white = bpy.data.materials.new("seamless")
 white.diffuse_color = (1, 1, 1, 1)

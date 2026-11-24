@@ -4,28 +4,71 @@ import { frames, rise } from "../../lib/renders";
 
 // [from, to] of each chapter's text, as fractions of the stage's scroll track
 const chapters = [
-  [0, 0.14, "Lorem ipsum dolor", "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus, posuere velit aliquet. Cras mattis consectetur purus sit amet fermentum. Donec ullamcorper nulla non metus auctor fringilla."],
-  [0.14, 0.23, "Sit amet consectetur", "Maecenas faucibus mollis interdum. Nullam quis risus eget urna mollis ornare vel eu leo. Vivamus sagittis lacus vel augue laoreet rutrum faucibus dolor auctor. Aenean lacinia bibendum nulla sed consectetur, praesent commodo cursus magna."],
-  [0.23, 0.51, "Adipiscing elit sed", "Etiam porta sem malesuada magna mollis euismod. Fusce dapibus, tellus ac cursus commodo, tortor mauris condimentum nibh, ut fermentum massa justo sit amet risus. Duis mollis, est non commodo luctus, nisi erat porttitor ligula."],
-  [0.51, 0.63, "Do eiusmod tempor", "Curabitur blandit tempus porttitor. Morbi leo risus, porta ac consectetur ac, vestibulum at eros. Sed posuere consectetur est at lobortis. Nulla vitae elit libero, a pharetra augue. Donec sed odio dui, cras justo odio."],
-  [0.63, 0.88, "Incididunt ut labore", "Vestibulum id ligula porta felis euismod semper. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec id elit non mi porta gravida at eget metus. Nullam id dolor id nibh ultricies vehicula ut id elit."],
-  [0.88, 1.01, "Et dolore magna", "Aenean eu leo quam. Pellentesque ornare sem lacinia quam venenatis vestibulum. Integer posuere erat a ante venenatis dapibus posuere velit aliquet. Morbi leo risus, porta ac consectetur ac, vestibulum at eros, sed posuere est."],
+  [
+    0,
+    0.14,
+    "Our hardware",
+    "We chose to use two Seeed Studio XIAO ESP32C5 microcontrollers for their strong radios, external antenna, and drivers that expose detailed information about the phase and amplitude along different subcarrier frequencies. ",
+  ],
+  [
+    0.14,
+    0.23,
+    "Transmitting WiFi",
+    "One ESP32 acts as a transmitter (TX) that continuously sends out packets. The other acts as a receiver (RX) which listens passively. In an open environment, the only path from TX to RX is the direct line of sight.",
+  ],
+  [
+    0.23,
+    0.51,
+    "Adding constraints",
+    "When we move the microcontrollers to a closed space, the waves bounce off walls while losing some of their energy, creating new paths to RX. Waves on those paths interfere with each other at RX.",
+  ],
+  [
+    0.51,
+    0.63,
+    "Measuring subcarrier amplitude",
+    "Our preliminary results show how signal strength varies across WiFi subcarrier frequencies even in an empty room. These interactions create a fingerprint based on the geometry of the room.",
+  ],
+  [
+    0.63,
+    0.88,
+    "Detecting motion",
+    "As objects move, they block old paths and also reflect waves to create new paths from TX to RX. These waves can amplify the signal if they are in-phase with the line of sight. If they are out-of-phase, they cancel out with the line of sight, weakening the signal. Thus, the amplitude rapidly changes when objects travel between [Fresnel zones](https://en.wikipedia.org/wiki/Fresnel_zone), which mark boundaries between reflections that cause constructive and destructive interference.",
+  ],
+  [
+    0.88,
+    1.01,
+    "Finding objects",
+    "Even when objects are stationary, their mere presence changes the environment as they add and block reflection points.",
+  ],
 ] as const;
 ---
 
-<section class="pin physics" id="physics" data-frames={JSON.stringify(frames("rise"))} data-rise={JSON.stringify(rise())}>
+<section
+  class="pin physics"
+  id="physics"
+  data-frames={JSON.stringify(frames("rise"))}
+  data-rise={JSON.stringify(rise())}
+>
   <div class="stage">
     <canvas class="photo" aria-hidden="true"></canvas>
     <canvas class="field" aria-hidden="true"></canvas>
     <canvas class="ink" aria-hidden="true"></canvas>
-    {chapters.map(([from, to, title, body]) => <Slot class="chapter" data-from={from} data-to={to} title={title} body={body} />)}
+    {chapters.map(([from, to, title, body]) => (
+      <Slot
+        class="chapter"
+        data-from={from}
+        data-to={to}
+        title={title}
+        body={body}
+      />
+    ))}
   </div>
 </section>
 
 <style>
   /* overlaps the hero's last screen so rise frame 0 replaces hero's identical last frame in place */
   .physics {
-    height: 1000vh;
+    height: 1150vh; /* 1000vh of physics after the HOLD fraction (script) of hardware close-up */
     margin-top: -100vh;
     margin-top: -100svh; /* must equal the stage height or the hand-off frame jumps */
     z-index: 1;
@@ -48,6 +91,11 @@ const chapters = [
     opacity: 1;
   }
 
+  /* every chapter sits in the same spot: hidden ones must not catch clicks meant for links in the shown one */
+  .stage :global(.chapter:not(.on)) {
+    pointer-events: none;
+  }
+
   @media (orientation: landscape) {
     .stage :global(.chapter) {
       top: 9vh;
@@ -55,14 +103,35 @@ const chapters = [
   }
 </style>
 
-
 <script>
   import { css, mix, token, type RGB } from "../../lib/color";
   import { loadCsi } from "../../lib/data";
   import { FIELD, MAX_SOURCES } from "../../lib/field";
   import { quad } from "../../lib/gl";
-  import { LAMBDA, SUBCARRIERS, csiAmplitude, dist, fresnelZone, imageSources, type Path, type Vec } from "../../lib/physics";
-  import { fromDevice, heroFit, lerpRect, roomFit, toScreen, type Rect, type Rise } from "../../lib/room";
+  import {
+    C,
+    DF,
+    F0,
+    LAMBDA,
+    SUBCARRIERS,
+    clearance,
+    specular,
+    csiAmplitude,
+    dist,
+    fresnelZone,
+    imageSources,
+    type Path,
+    type Vec,
+  } from "../../lib/physics";
+  import {
+    fromDevice,
+    heroFit,
+    lerpRect,
+    roomFit,
+    toScreen,
+    type Rect,
+    type Rise,
+  } from "../../lib/room";
   import { clamp01, onFrame, progress, reduced, seg } from "../../lib/scroll";
   import { sequence } from "../../lib/sequence";
   import { label, portrait, sizeCanvas } from "../../lib/stage";
@@ -77,9 +146,17 @@ const chapters = [
   const ctx = ink.getContext("2d")!;
   const rise: Rise = JSON.parse(root.dataset.rise!);
   const seq = sequence("rise", JSON.parse(root.dataset.frames!));
-  const [deep, wash, bloom, enig] = ["deep", "wash", "bloom", "enig"].map(token);
+  const [deep, wash, bloom, enig, block] = [
+    "deep",
+    "wash",
+    "bloom",
+    "enig",
+    "block",
+  ].map(token);
 
-  new IntersectionObserver(([e]) => e.isIntersecting && seq.load()).observe(root);
+  new IntersectionObserver(([e]) => e.isIntersecting && seq.load()).observe(
+    root,
+  );
 
   // Scroll timeline, as fractions of the track
   type Span = readonly [number, number];
@@ -97,6 +174,10 @@ const chapters = [
     profiles: [0.89, 0.94],
   } satisfies Record<string, Span>;
   const at = (p: number, [a, b]: Span) => seg(p, a, b);
+  // the track opens on the hardware close-up: rise's first `attach` frames slide the board right and plug
+  // the antenna in, before T's timeline (which runs over the rest of the track) starts
+  const HOLD = 0.13;
+  const ATTACH = (rise.attach ?? 0) / (rise.frames - 1); // share of rise's frames that are the attach
   const ease = (t: number) => t * t * (3 - 2 * t);
 
   // --- physics -------------------------------------------------------------
@@ -108,14 +189,24 @@ const chapters = [
   const OMEGA = 2 * Math.PI * 1.2; // display rate of the travelling wave, rad/s
 
   /** The straight line image→rx folded back into the room at every wall it crosses is the real bounce path. */
-  const fold = (v: number, L: number) => L - Math.abs((((v % (2 * L)) + 2 * L) % (2 * L)) - L);
+  const fold = (v: number, L: number) =>
+    L - Math.abs((((v % (2 * L)) + 2 * L) % (2 * L)) - L);
   function bounces(src: Vec): Vec[] {
     const ts = [0, 1];
-    for (const [a, b, L] of [[src.x, rx.x, W], [src.y, rx.y, H]]) {
+    for (const [a, b, L] of [
+      [src.x, rx.x, W],
+      [src.y, rx.y, H],
+    ]) {
       if (a === b) continue;
-      for (let m = Math.ceil(Math.min(a, b) / L); m * L < Math.max(a, b); m++) ts.push((m * L - a) / (b - a));
+      for (let m = Math.ceil(Math.min(a, b) / L); m * L < Math.max(a, b); m++)
+        ts.push((m * L - a) / (b - a));
     }
-    return ts.sort((u, v) => u - v).map((t) => ({ x: fold(src.x + (rx.x - src.x) * t, W), y: fold(src.y + (rx.y - src.y) * t, H) }));
+    return ts
+      .sort((u, v) => u - v)
+      .map((t) => ({
+        x: fold(src.x + (rx.x - src.x) * t, W),
+        y: fold(src.y + (rx.y - src.y) * t, H),
+      }));
   }
   const rays = paths.map((p) => bounces(p.src));
 
@@ -126,7 +217,10 @@ const chapters = [
     const out = [pts[0]];
     for (let i = 0; i < lens.length; i++) {
       const f = Math.min(1, left / lens[i]);
-      out.push({ x: pts[i].x + (pts[i + 1].x - pts[i].x) * f, y: pts[i].y + (pts[i + 1].y - pts[i].y) * f });
+      out.push({
+        x: pts[i].x + (pts[i + 1].x - pts[i].x) * f,
+        y: pts[i].y + (pts[i + 1].y - pts[i].y) * f,
+      });
       left -= lens[i];
       if (left <= 0) break;
     }
@@ -139,28 +233,52 @@ const chapters = [
   const nrm = { x: -(rx.y - tx.y) / los, y: (rx.x - tx.x) / los };
   const SWING = 1.2; // m either side
   const BODY_R = 0.175;
-  const BODY_GAIN = 0.4;
-  const bodyAt = (t: number) => ({ x: mid.x + nrm.x * SWING * (1 - 2 * t), y: mid.y + nrm.y * SWING * (1 - 2 * t) });
+  // reflection off a (water-rich) body: weaker than the direct wave and flipped, like a wall bounce
+  const BODY_GAIN = -0.4;
+  // a person in the line of sight costs roughly 5-10 dB in WiFi measurements; the ball stands in for one
+  const SHADOW = 0.35;
+  const bodyAt = (t: number) => ({
+    x: mid.x + nrm.x * SWING * (1 - 2 * t),
+    y: mid.y + nrm.y * SWING * (1 - 2 * t),
+  });
+  /** Where the ball reflects tx → rx: on its surface, not its centre. Ray, trace, field and zones all use it. */
+  const hitAt = (t: number) => specular(tx, rx, bodyAt(t), BODY_R);
+  /** 1 while the ball is clear of the line of sight; 0 once it blocks it. Blocked, there is no reflection
+   *  towards rx (it bounces back towards tx) and the direct wave is shadowed instead. */
+  const openAt = (t: number) => clearance(tx, rx, bodyAt(t), BODY_R);
   /** The body's wave and its wall bounces as extra paths: each a virtual source on the line rx→(body image)
-   *  whose distance to rx is the full length tx→body→(walls)→rx. `wall` scales the bounced ones. */
-  function bodyPaths(b: Vec, wall: number): Path[] {
+   *  whose distance to rx is the full length tx→body→(walls)→rx. `wall` scales the bounced ones, `open` all. */
+  function bodyPaths(b: Vec, wall: number, open: number): Path[] {
     const d1 = dist(tx, b);
     return imageSources(b, W, H, 2).map((q) => {
       const d2 = dist(q.src, rx);
       const f = (d1 + d2) / d2;
-      return { src: { x: rx.x + (q.src.x - rx.x) * f, y: rx.y + (q.src.y - rx.y) * f }, order: q.order + 1, gain: BODY_GAIN * q.gain * (q.order ? wall : 1) };
+      return {
+        src: { x: rx.x + (q.src.x - rx.x) * f, y: rx.y + (q.src.y - rx.y) * f },
+        order: q.order + 1,
+        gain: BODY_GAIN * open * q.gain * (q.order ? wall : 1),
+      };
     });
   }
   const TRACE_N = 400;
   const TRACE_K = 1;
   /** Bars for the paths weighted by how far each has faded in (weights 0..1). */
-  const weighted = (w: number[]) => paths.map((q, i) => ({ ...q, gain: q.gain * w[i] }));
+  const weighted = (w: number[]) =>
+    paths.map((q, i) => ({ ...q, gain: q.gain * w[i] }));
   // in the Fresnel chapter the wall reflections step back so the body's wave reads against line of sight;
   // the trace uses the same mix the field shows
   const WALL_REST = 0.5;
-  const trace = Array.from({ length: TRACE_N + 1 }, (_, i) =>
-    csiAmplitude(weighted(paths.map((_, j) => (j ? WALL_REST : 1))), rx, TRACE_K, bodyPaths(bodyAt(i / TRACE_N), WALL_REST)),
-  );
+  const trace = Array.from({ length: TRACE_N + 1 }, (_, i) => {
+    const open = openAt(i / TRACE_N);
+    return csiAmplitude(
+      weighted(
+        paths.map((_, j) => (j ? WALL_REST : SHADOW + (1 - SHADOW) * open)),
+      ),
+      rx,
+      TRACE_K,
+      bodyPaths(hitAt(i / TRACE_N), WALL_REST, open),
+    );
+  });
   const [tLo, tHi] = [Math.min(...trace), Math.max(...trace)];
 
   // Fresnel zone n boundary: ellipse with foci tx, rx and excess path nλ/2
@@ -168,11 +286,18 @@ const chapters = [
     const a = (los + ((i + 1) * LAMBDA) / 2) / 2;
     return { a, b: Math.sqrt(a * a - (los / 2) ** 2) };
   });
-  const zoneOf = (t: number) => fresnelZone(bodyAt(t), tx, rx);
+  const zoneOf = (t: number) => fresnelZone(hitAt(t), tx, rx);
   // trace samples where the body crosses a drawn zone boundary
-  const crossings = trace.flatMap((_, i) => (i && zoneOf(i / TRACE_N) !== zoneOf((i - 1) / TRACE_N) && Math.min(zoneOf(i / TRACE_N), zoneOf((i - 1) / TRACE_N)) <= ZONES.length ? [i] : []));
+  const crossings = trace.flatMap((_, i) =>
+    i &&
+    zoneOf(i / TRACE_N) !== zoneOf((i - 1) / TRACE_N) &&
+    Math.min(zoneOf(i / TRACE_N), zoneOf((i - 1) / TRACE_N)) <= ZONES.length
+      ? [i]
+      : [],
+  );
 
-  const sim = (w: number[]) => SUBCARRIERS.map((k) => csiAmplitude(weighted(w), rx, k));
+  const sim = (w: number[]) =>
+    SUBCARRIERS.map((k) => csiAmplitude(weighted(w), rx, k));
   const simMax = Math.max(...sim(paths.map(() => 1))) * 1.15;
   const losLevel = sim(paths.map((_, i) => +(i === 0)))[0] / simMax;
   let profiles: Record<string, number[]> | null = null;
@@ -222,25 +347,47 @@ const chapters = [
 
   // --- rolling ball (top-down, light from the upper left) -------------------
   type V3 = [number, number, number];
-  const unit = (v: V3): V3 => { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; };
+  const unit = (v: V3): V3 => {
+    const l = Math.hypot(...v);
+    return [v[0] / l, v[1] / l, v[2] / l];
+  };
   // surface markings in the ball's own frame: one tilted seam (great circle) and a few spots
   const SEAM: V3[] = Array.from({ length: 73 }, (_, i) => {
     const t = (i / 72) * 2 * Math.PI;
     return unit([Math.cos(t), Math.sin(t) * 0.5, Math.sin(t) * 0.87]);
   });
-  const SPOTS: V3[] = [unit([0.3, -0.8, 0.5]), unit([-0.6, 0.2, -0.7]), unit([0.7, 0.5, -0.4]), unit([-0.2, 0.6, 0.8])];
+  const SPOTS: V3[] = [
+    unit([0.3, -0.8, 0.5]),
+    unit([-0.6, 0.2, -0.7]),
+    unit([0.7, 0.5, -0.4]),
+    unit([-0.2, 0.6, 0.8]),
+  ];
   /** Rotate p about the horizontal axis perpendicular to travel u by theta; positive theta moves the top forward. */
   function roll(p: V3, u: Vec, theta: number): V3 {
     const a: V3 = [-u.y, u.x, 0];
-    const c = Math.cos(theta), sn = Math.sin(theta);
-    const axp: V3 = [a[1] * p[2] - a[2] * p[1], a[2] * p[0] - a[0] * p[2], a[0] * p[1] - a[1] * p[0]];
+    const c = Math.cos(theta),
+      sn = Math.sin(theta);
+    const axp: V3 = [
+      a[1] * p[2] - a[2] * p[1],
+      a[2] * p[0] - a[0] * p[2],
+      a[0] * p[1] - a[1] * p[0],
+    ];
     const d = a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
-    return [0, 1, 2].map((i) => p[i] * c + axp[i] * sn + a[i] * d * (1 - c)) as V3;
+    return [0, 1, 2].map(
+      (i) => p[i] * c + axp[i] * sn + a[i] * d * (1 - c),
+    ) as V3;
   }
 
   function ball(c: Vec, R: number, u: Vec, theta: number, a: number) {
     // contact shadow, offset away from the light
-    const sh = ctx.createRadialGradient(c.x + R * 0.3, c.y + R * 0.35, R * 0.2, c.x + R * 0.3, c.y + R * 0.35, R * 1.35);
+    const sh = ctx.createRadialGradient(
+      c.x + R * 0.3,
+      c.y + R * 0.35,
+      R * 0.2,
+      c.x + R * 0.3,
+      c.y + R * 0.35,
+      R * 1.35,
+    );
     sh.addColorStop(0, css(deep, 0.75 * a));
     sh.addColorStop(1, css(deep, 0));
     ctx.fillStyle = sh;
@@ -249,7 +396,8 @@ const chapters = [
     ctx.fill();
 
     // body: lit gold falling off to a dark limb
-    const lx = c.x - R * 0.35, ly = c.y - R * 0.4;
+    const lx = c.x - R * 0.35,
+      ly = c.y - R * 0.4;
     const g = ctx.createRadialGradient(lx, ly, R * 0.05, c.x, c.y, R);
     g.addColorStop(0, css(mix(enig, bloom, 0.35), a));
     g.addColorStop(0.45, css(enig, a));
@@ -281,8 +429,17 @@ const chapters = [
       ctx.fillStyle = css(mix(enig, deep, 0.6), a * Math.min(1, q[2] * 2.5));
       ctx.beginPath();
       // a round spot seen at an angle: squashed along the direction it faces away
-      const r = R * 0.13, ang = Math.atan2(q[1], q[0]);
-      ctx.ellipse(c.x + q[0] * R, c.y + q[1] * R, r * Math.max(0.15, q[2]), r, ang, 0, 2 * Math.PI);
+      const r = R * 0.13,
+        ang = Math.atan2(q[1], q[0]);
+      ctx.ellipse(
+        c.x + q[0] * R,
+        c.y + q[1] * R,
+        r * Math.max(0.15, q[2]),
+        r,
+        ang,
+        0,
+        2 * Math.PI,
+      );
       ctx.fill();
     }
     ctx.restore();
@@ -297,34 +454,57 @@ const chapters = [
   }
 
   onFrame((time) => {
-    const { p, visible, pinned } = progress(root);
+    const { p: track, visible, pinned } = progress(root);
+    const attach = seg(track, 0, HOLD);
+    const p = seg(track, HOLD, 1);
     stage.style.visibility = pinned ? "visible" : "hidden";
     if (!visible || !pinned) return;
-    for (const s of slots) s.classList.toggle("on", p >= +s.dataset.from! && p < +s.dataset.to!);
+    for (const s of slots)
+      s.classList.toggle("on", p >= +s.dataset.from! && p < +s.dataset.to!);
 
     // photo: rise frames, easing from the hero's framing to the plan-view framing
     const { w, h, dpr } = sizeCanvas(photo);
     // portrait: subcarrier panel on top, room under it, text at the bottom
     const stripH = Math.min(56, h * 0.08);
-    const room = roomFit(rise, w, h, h * 0.04 + stripH + (portrait(w, h) ? 28 : 8)); // portrait: room for the panel's axis label
+    const room = roomFit(
+      rise,
+      w,
+      h,
+      h * 0.04 + stripH + (portrait(w, h) ? 28 : 8),
+    ); // portrait: room for the panel's axis label
     const pr = at(p, T.rise);
     pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // lift starts once the board is too small for its black soldermask to turn blue
-    seq.draw(pctx, pr, lerpRect(heroFit(w, h), room, ease(pr)), deep, ease(clamp01((pr - 0.15) / 0.35)));
+    seq.draw(
+      pctx,
+      ATTACH * attach + (1 - ATTACH) * pr,
+      lerpRect(heroFit(w, h), room, ease(pr)),
+      deep,
+      ease(clamp01((pr - 0.15) / 0.35)),
+    );
     const { at: S, s } = toScreen(rise, room);
 
     // reflections: each ray draws in over the first half of its slot; once it lands its wave fades
     // in over the next 0.8 slot, overlapping the next ray, so the pattern morphs instead of snapping
     const FADE = 0.8;
     const multi = at(p, T.multi) * (paths.length - 1 + FADE - 0.5);
-    const drawn = paths.map((_, i) => (i ? clamp01((multi - (i - 1)) / 0.5) : at(p, T.los)));
+    const drawn = paths.map((_, i) =>
+      i ? clamp01((multi - (i - 1)) / 0.5) : at(p, T.los),
+    );
     const fresnel = at(p, T.fresnel);
     const wall = 1 - (1 - WALL_REST) * fresnel;
-    const weight = paths.map((_, i) => (i ? ease(clamp01((multi - (i - 1) - 0.5) / FADE)) * wall : 1));
+    const weight = paths.map((_, i) =>
+      i ? ease(clamp01((multi - (i - 1) - 0.5) / FADE)) * wall : 1,
+    );
 
     // free space fills the screen, then the walls close in to the room
     const walls = ease(at(p, T.walls));
-    const screen = [rise.frame.x0 - room.x / s, rise.frame.y1 - (h - room.y) / s, rise.frame.x0 + (w - room.x) / s, rise.frame.y1 + room.y / s];
+    const screen = [
+      rise.frame.x0 - room.x / s,
+      rise.frame.y1 - (h - room.y) / s,
+      rise.frame.x0 + (w - room.x) / s,
+      rise.frame.y1 + room.y / s,
+    ];
     const clip = screen.map((v, i) => v + ([0, 0, W, H][i] - v) * walls);
 
     const bt = at(p, T.body);
@@ -336,18 +516,37 @@ const chapters = [
     if (field && gain > 0) {
       const { gl, loc } = field;
       const g = sizeCanvas(fieldCanvas, 1.5);
-      gl.uniform4f(loc("uMap"), ...fromDevice(rise, room, g.dpr, fieldCanvas.height));
+      gl.uniform4f(
+        loc("uMap"),
+        ...fromDevice(rise, room, g.dpr, fieldCanvas.height),
+      );
       gl.uniform4f(loc("uClip"), clip[0], clip[1], clip[2], clip[3]);
-      gl.uniform3fv(loc("uSrc"), src.map((v, j) => (j % 3 === 2 ? v * (weight[(j / 3) | 0] ?? 0) : v)));
+      gl.uniform3fv(
+        loc("uSrc"),
+        src.map((v, j) => (j % 3 === 2 ? v * (weight[(j / 3) | 0] ?? 0) : v)),
+      );
       gl.uniform1f(loc("uPhase"), reduced ? 0 : time * OMEGA);
-      gl.uniform1f(loc("uNorm"), 0.9 / Math.hypot(...paths.map((q, i) => q.gain * weight[i])));
+      gl.uniform1f(
+        loc("uNorm"),
+        0.9 / Math.hypot(...paths.map((q, i) => q.gain * weight[i])),
+      );
       gl.uniform1f(loc("uGain"), gain);
-      // the body scatters the direct wave: sources at the body and its wall images, delayed by the tx→body
-      // leg, so at rx their phases match bodyPaths and the field agrees with the trace below
-      const b = bodyAt(bt);
+      // the body scatters the direct wave: sources at its reflection point and that point's wall images, delayed
+      // by the tx→point leg, so at rx their phases match bodyPaths and the field agrees with the trace below
+      const b = hitAt(bt);
       const d1 = dist(tx, b);
-      const amp = (BODY_GAIN * bodyOn) / Math.sqrt(d1);
-      gl.uniform3fv(loc("uScat"), imageSources(b, W, H, 2).flatMap((q) => [q.src.x, q.src.y, amp * q.gain * (q.order ? wall : 1)]));
+      const amp = (BODY_GAIN * bodyOn * openAt(bt)) / Math.sqrt(d1);
+      const ball = bodyAt(bt);
+      gl.uniform3f(loc("uBall"), ball.x, ball.y, BODY_R);
+      gl.uniform1f(loc("uShadow"), 1 - (1 - SHADOW) * bodyOn);
+      gl.uniform3fv(
+        loc("uScat"),
+        imageSources(b, W, H, 2).flatMap((q) => [
+          q.src.x,
+          q.src.y,
+          amp * q.gain * (q.order ? wall : 1),
+        ]),
+      );
       gl.uniform1f(loc("uScatLag"), ((2 * Math.PI) / LAMBDA) * d1);
       field.draw();
     }
@@ -371,7 +570,10 @@ const chapters = [
       if (q <= 0) return;
       const pts = partial(rays[i].map(S), q);
       ctx.lineWidth = q < 1 ? 2 : 1.25;
-      ctx.strokeStyle = css(bloom, (q < 1 ? 0.95 : 0.3 + 0.35 * paths[i].gain) * rayFade);
+      ctx.strokeStyle = css(
+        bloom,
+        (q < 1 ? 0.95 : 0.3 + 0.35 * Math.abs(paths[i].gain)) * rayFade,
+      );
       polyline(pts);
       ctx.stroke();
       // wall hits
@@ -397,13 +599,62 @@ const chapters = [
     const lit = at(p, T.glow);
     for (const q of [tx, rx]) glow(S(q), s * 0.3, bloom, 0.9 * lit);
 
+    // the ball's reflection tx → ball → rx: gold while it arrives in step with line of sight, blue when it
+    // cancels. Its bounce flips it (BODY_GAIN < 0), so a whole-wavelength-longer path arrives out of step
+    const inStep = (q: Vec) =>
+      (1 +
+        Math.sign(BODY_GAIN) *
+          Math.cos(
+            (2 *
+              Math.PI *
+              (F0 + TRACE_K * DF) *
+              (dist(tx, q) + dist(q, rx) - dist(tx, rx))) /
+              C,
+          )) /
+      2;
+    const hit = hitAt(bt);
+    const stepColor = mix(wash, enig, inStep(hit));
+    if (bodyOn > 0) {
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = css(stepColor, bodyOn * openAt(bt));
+      polyline([tx, hit, rx].map(S));
+      ctx.stroke();
+    }
+
     if (bodyOn > 0) {
       const b = S(bodyAt(bt));
       const ahead = S(bodyAt(bt + 0.01));
       const len = Math.hypot(ahead.x - b.x, ahead.y - b.y) || 1;
       glow(b, BODY_R * s * 2.2, enig, 0.35 * bodyOn);
       // rolled without slipping: angle = distance travelled / radius
-      ball(b, BODY_R * s, { x: (ahead.x - b.x) / len, y: (ahead.y - b.y) / len }, (2 * SWING * bt) / BODY_R, bodyOn);
+      ball(
+        b,
+        BODY_R * s,
+        { x: (ahead.x - b.x) / len, y: (ahead.y - b.y) / len },
+        (2 * SWING * bt) / BODY_R,
+        bodyOn,
+      );
+    }
+
+    // blocked: the line of sight runs into the ball, red up to where it meets it and crossed out there
+    const shut = bodyOn * (1 - openAt(bt));
+    if (shut > 0) {
+      const c = bodyAt(bt);
+      const u = { x: (rx.x - tx.x) / los, y: (rx.y - tx.y) / los };
+      const along = (c.x - tx.x) * u.x + (c.y - tx.y) * u.y;
+      const off = (c.x - tx.x) * u.y - (c.y - tx.y) * u.x;
+      const back = Math.sqrt(Math.max(0, BODY_R ** 2 - off ** 2)); // half the chord the line cuts through it
+      const e = S({
+        x: tx.x + u.x * (along - back),
+        y: tx.y + u.y * (along - back),
+      });
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = css(block, shut);
+      polyline([S(tx), e]);
+      ctx.stroke();
+      const k = 7;
+      line(e.x - k, e.y - k, e.x + k, e.y + k);
+      line(e.x - k, e.y + k, e.x + k, e.y - k);
     }
 
     // bottom panel: subcarrier bars → body trace → real empty vs still profiles
@@ -411,14 +662,34 @@ const chapters = [
     const right = S({ x: W, y: H }).x;
     const panel: Rect = portrait(w, h)
       ? { x: left, y: h * 0.04, w: right - left, h: stripH }
-      : { x: w * 0.45, y: Math.min(h * 0.93, S({ x: 0, y: 0 }).y - 32) - h * 0.13, w: Math.min(w * 0.95, right) - w * 0.45, h: h * 0.13 };
+      : {
+          x: w * 0.45,
+          y: Math.min(h * 0.93, S({ x: 0, y: 0 }).y - 32) - h * 0.13,
+          w: Math.min(w * 0.95, right) - w * 0.45,
+          h: h * 0.13,
+        };
     const bars = at(p, T.strip) * (1 - fresnel);
     const traceOn = fresnel * (1 - at(p, T.profiles));
     const prof = profiles ? at(p, T.profiles) : 0;
     const PY = (v: number) => panel.y + panel.h * (1 - v);
     const axes = (x: string, y: string, a: number) => {
-      label(ctx, x, panel.x + panel.w / 2, panel.y + panel.h + 12, css(bloom, 0.75 * a), "center");
-      label(ctx, y, panel.x - 12, panel.y + panel.h / 2, css(bloom, 0.75 * a), "center", true);
+      label(
+        ctx,
+        x,
+        panel.x + panel.w / 2,
+        panel.y + panel.h + 12,
+        css(bloom, 0.75 * a),
+        "center",
+      );
+      label(
+        ctx,
+        y,
+        panel.x - 12,
+        panel.y + panel.h / 2,
+        css(bloom, 0.75 * a),
+        "center",
+        true,
+      );
     };
 
     if (bars > 0) {
@@ -428,10 +699,17 @@ const chapters = [
       const bw = panel.w / 57;
       const now = sim(weight);
       SUBCARRIERS.forEach((k, i) => {
-        const v = now[i] / simMax + ((real ? real[i] / rm : 0) - now[i] / simMax) * m;
+        const v =
+          now[i] / simMax + ((real ? real[i] / rm : 0) - now[i] / simMax) * m;
         // brighter where the channel has faded or peaked away from the flat line-of-sight level
-        const dev = Math.min(1, (Math.abs(v - losLevel) / losLevel) * 2 * (1 - m));
-        ctx.fillStyle = css(m < 0.5 ? mix(wash, bloom, dev) : bloom, 0.9 * bars);
+        const dev = Math.min(
+          1,
+          (Math.abs(v - losLevel) / losLevel) * 2 * (1 - m),
+        );
+        ctx.fillStyle = css(
+          m < 0.5 ? mix(wash, bloom, dev) : bloom,
+          0.9 * bars,
+        );
         const x = panel.x + (k + 28) * bw;
         ctx.fillRect(x + bw * 0.2, PY(v), bw * 0.6, panel.h * v);
       });
@@ -442,9 +720,28 @@ const chapters = [
       line(panel.x, PY(losLevel), panel.x + panel.w, PY(losLevel));
       ctx.setLineDash([]);
       axes("subcarrier", "amplitude", bars);
-      label(ctx, "line of sight only", panel.x + panel.w, PY(losLevel) - 10, css(bloom, 0.8 * bars * (1 - m)), "right");
-      label(ctx, "simulated", panel.x, panel.y - 10, css(bloom, 0.75 * bars * (1 - m)));
-      label(ctx, "measured, empty room", panel.x, panel.y - 10, css(bloom, 0.75 * bars * m));
+      label(
+        ctx,
+        "line of sight only",
+        panel.x + panel.w,
+        PY(losLevel) - 10,
+        css(bloom, 0.8 * bars * (1 - m)),
+        "right",
+      );
+      label(
+        ctx,
+        "simulated",
+        panel.x,
+        panel.y - 10,
+        css(bloom, 0.75 * bars * (1 - m)),
+      );
+      label(
+        ctx,
+        "measured, empty room",
+        panel.x,
+        panel.y - 10,
+        css(bloom, 0.75 * bars * m),
+      );
     }
 
     if (traceOn > 0) {
@@ -460,15 +757,39 @@ const chapters = [
       ctx.lineWidth = 1.75;
       polyline(trace.slice(0, upto + 1).map((v, i) => ({ x: X(i), y: Y(v) })));
       ctx.stroke();
-      if (bodyOn > 0) glow({ x: X(upto), y: Y(trace[upto]) }, 12, enig, bodyOn);
+      if (bodyOn > 0)
+        glow({ x: X(upto), y: Y(trace[upto]) }, 12, stepColor, bodyOn);
       axes("ball position", "amplitude", traceOn);
+      // legend for the reflected ray's colour, where the panel's series labels sit in the other modes
+      let lx = panel.x;
+      ctx.font = `500 13px ${getComputedStyle(document.documentElement).getPropertyValue("--body")}`; // label()'s, to measure
+      for (const [name, color] of [
+        ["in phase", enig],
+        ["out of phase", wash],
+        ["blocked", block],
+      ] as const) {
+        ctx.strokeStyle = css(color, bodyOn * traceOn);
+        ctx.lineWidth = 2.5;
+        line(lx, panel.y - 10, lx + 16, panel.y - 10);
+        label(
+          ctx,
+          name,
+          lx + 22,
+          panel.y - 10,
+          css(bloom, 0.75 * bodyOn * traceOn),
+        );
+        lx += 22 + ctx.measureText(name).width + 24;
+      }
     }
 
     if (prof > 0 && profiles) {
       const { empty, still } = profiles;
       const all = [...empty, ...still];
       const [lo, hi] = [Math.min(...all), Math.max(...all)];
-      const pt = (v: number, i: number) => ({ x: panel.x + ((SUBCARRIERS[i] + 28) / 56) * panel.w, y: PY((v - lo) / (hi - lo)) });
+      const pt = (v: number, i: number) => ({
+        x: panel.x + ((SUBCARRIERS[i] + 28) / 56) * panel.w,
+        y: PY((v - lo) / (hi - lo)),
+      });
       ctx.save();
       ctx.beginPath();
       ctx.rect(panel.x - 4, panel.y - 8, panel.w * prof + 8, panel.h + 16);
@@ -478,7 +799,10 @@ const chapters = [
       ctx.fillStyle = css(enig, 0.22);
       ctx.fill();
       ctx.lineWidth = 1.75;
-      for (const [vals, color] of [[empty, bloom], [still, enig]] as const) {
+      for (const [vals, color] of [
+        [empty, bloom],
+        [still, enig],
+      ] as const) {
         ctx.strokeStyle = css(color, 0.95);
         polyline(vals.map(pt));
         ctx.stroke();
@@ -488,7 +812,13 @@ const chapters = [
       // series names at the left end, the higher line's above it and the lower's below
       const [e0, s0] = [pt(empty[0], 0).y, pt(still[0], 0).y];
       label(ctx, "empty", panel.x, e0 + (e0 < s0 ? -12 : 12), css(bloom, prof));
-      label(ctx, "standing still", panel.x, s0 + (s0 <= e0 ? -12 : 12), css(enig, prof));
+      label(
+        ctx,
+        "standing still",
+        panel.x,
+        s0 + (s0 <= e0 ? -12 : 12),
+        css(enig, prof),
+      );
     }
   });
 </script>

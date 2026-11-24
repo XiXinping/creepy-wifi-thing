@@ -72,6 +72,12 @@ p {
   max-width: 68ch;
 }
 
+.slot a {
+  color: inherit;
+  text-decoration-color: var(--enig);
+  text-underline-offset: 0.2em;
+}
+
 a:focus-visible {
   outline: 2px solid var(--bloom);
   outline-offset: 4px;

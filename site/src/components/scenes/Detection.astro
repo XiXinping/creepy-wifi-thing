@@ -7,8 +7,8 @@ import Slot from "../Slot.astro";
     <canvas aria-hidden="true"></canvas>
     <Slot
       class="side"
-      title="Quis nostrud exercitation"
-      body="Donec sed odio dui. Etiam porta sem malesuada magna mollis euismod. Maecenas sed diam eget risus varius blandit sit amet non magna. Vivamus sagittis lacus vel augue laoreet rutrum faucibus dolor auctor, duis mollis est non commodo luctus."
+      title="Sensing motion in real-time"
+      body="We can assign a score to how likely it is that an object is moving based on factors like the change in amplitude. Past an empirical threshold, we consider the evidence strong enough to assert that something is moving. Our work lies in devising an accurate metric and sensible decision boundary, whether through rolling variance or black-box neural nets."
     />
   </div>
 </section>
@@ -35,7 +35,9 @@ import Slot from "../Slot.astro";
   let thr = 0;
   loadCsi().then(({ recs }) => {
     const WARMUP = 10; // frames while prep_csi's 0.5 s rolling-variance window is still filling
-    const [empty, still, motion] = ["empty", "still", "motion"].map((n) => score(recs[n].var).slice(WARMUP));
+    const [empty, still, motion] = ["empty", "still", "motion"].map((n) =>
+      score(recs[n].var).slice(WARMUP),
+    );
     series = [...empty, ...still, ...motion];
     cuts = [empty.length, empty.length + still.length];
     thr = threshold(empty, still);
@@ -77,7 +79,14 @@ import Slot from "../Slot.astro";
       const c1 = [...cuts, series.length - 1][i];
       ctx.fillStyle = i ? css(enig, 0.9) : css(wash, 0.6);
       ctx.fillRect(X(c0) + 2, r.y + r.h + 14, X(c1) - X(c0) - 4, i ? 3 : 1);
-      label(ctx, ["empty", "standing still", "moving"][i], (X(c0) + X(c1)) / 2, r.y + r.h + 32, i ? css(enig, 0.9) : css(bloom, 0.75), "center");
+      label(
+        ctx,
+        ["empty", "standing still", "moving"][i],
+        (X(c0) + X(c1)) / 2,
+        r.y + r.h + 32,
+        i ? css(enig, 0.9) : css(bloom, 0.75),
+        "center",
+      );
     });
 
     // faint exposure under the drawn line
@@ -106,7 +115,15 @@ import Slot from "../Slot.astro";
     ctx.stroke();
     ctx.setLineDash([]);
     label(ctx, "threshold", r.x + 4, Y(thr) - 10, css(bloom, 0.75));
-    label(ctx, "motion score", r.x - 12, r.y + r.h / 2, css(bloom, 0.75), "center", true);
+    label(
+      ctx,
+      "motion score",
+      r.x - 12,
+      r.y + r.h / 2,
+      css(bloom, 0.75),
+      "center",
+      true,
+    );
 
     ctx.lineWidth = 1.25;
     ctx.strokeStyle = css(bloom);

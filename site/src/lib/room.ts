@@ -4,6 +4,7 @@ import type { Vec } from "./physics";
 
 export type Rise = {
   frames: number;
+  attach?: number; // leading frames before the rise proper (board slides right, antenna plugs in)
   room: { w: number; h: number };
   tx: [number, number];
   rx: [number, number];
