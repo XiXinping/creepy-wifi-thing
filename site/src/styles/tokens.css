@@ -1,0 +1,20 @@
+:root {
+  --deep: #0a2142;
+  --prussian: #0f2e57;
+  --wash: #6e93b8;
+  --bloom: #e8f1f8;
+  --enig: #dda878;
+
+  --display: "Bodoni Moda Variable", "Bodoni Moda", Didot, serif;
+  --body: "Atkinson Hyperlegible Next Variable", system-ui, sans-serif;
+
+  /* 1.25 modular scale from 18px */
+  --s0: 1rem;
+  --s1: 1.25rem;
+  --s2: 1.5625rem;
+  --s3: 1.953rem;
+  --s4: 2.441rem;
+  --s5: 3.052rem;
+
+  --gutter: clamp(16px, 5vw, 80px);
+}

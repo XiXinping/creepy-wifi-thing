@@ -1,0 +1,111 @@
+---
+import Slot from "../Slot.astro";
+---
+
+<section class="pin motion" id="motion">
+  <div class="stage">
+    <canvas aria-hidden="true"></canvas>
+    <Slot
+      class="side"
+      title="Ut enim ad minim"
+      body="Nullam quis risus eget urna mollis ornare vel eu leo. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Sed posuere consectetur est at lobortis, vestibulum id ligula porta felis euismod semper."
+    />
+  </div>
+</section>
+
+<style>
+  .motion {
+    height: 300vh;
+  }
+</style>
+
+<script>
+  import { css, mix, ramp, token } from "../../lib/color";
+  import { K, baseline, loadCsi, type Rec } from "../../lib/data";
+  import { clamp01, onFrame, progress } from "../../lib/scroll";
+  import { label, panelRect, sizeCanvas } from "../../lib/stage";
+
+  const root = document.getElementById("motion")!;
+  const canvas = root.querySelector("canvas")!;
+  const ctx = canvas.getContext("2d")!;
+  const [deep, wash, bloom, enig] = ["deep", "wash", "bloom", "enig"].map(token);
+  const RATE = 20; // Hz, csi.json rateHz
+  const WINDOW = 10 * RATE;
+
+  /** Time × subcarrier image, one pixel per sample: each subcarrier's amplitude around its own mean
+   *  (wash = mean, darker = below, brighter = above), gold where variance clears that subcarrier's quiet-room ceiling. */
+  function waterfall(r: Rec, quiet?: number[]) {
+    const mean = Array.from({ length: K }, (_, k) => {
+      let sum = 0;
+      for (let t = 0; t < r.frames; t++) sum += r.amp[t * K + k];
+      return sum / r.frames;
+    });
+    const c = document.createElement("canvas");
+    c.width = r.frames;
+    c.height = K;
+    const g = c.getContext("2d")!;
+    const img = g.createImageData(r.frames, K);
+    for (let t = 0; t < r.frames; t++)
+      for (let k = 0; k < K; k++) {
+        const i = t * K + k;
+        let col = ramp(deep, wash, bloom, clamp01(0.5 + (r.amp[i] - mean[k]) / 70));
+        if (quiet) {
+          const u = clamp01((r.var[i] / quiet[k] - 1) / 0.4);
+          col = mix(col, enig, u * u * (3 - 2 * u));
+        }
+        img.data.set([...col, 255], ((K - 1 - k) * r.frames + t) * 4);
+      }
+    g.putImageData(img, 0, 0);
+    return c;
+  }
+
+  let tiles: HTMLCanvasElement[] = [];
+  loadCsi().then(({ recs }) => {
+    tiles = [waterfall(recs.empty), waterfall(recs.motion, baseline(recs.empty.var))];
+  });
+
+  let last = "";
+  onFrame(() => {
+    const { p, visible } = progress(root);
+    if (!visible || !tiles.length) return;
+    const { w, h, dpr } = sizeCanvas(canvas);
+    const key = `${p}|${canvas.width}|${canvas.height}`;
+    if (key === last) return;
+    last = key;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const r = panelRect(w, h);
+    const gap = Math.max(r.h * 0.08, 36); // ticks under the top panel, then the bottom panel's name
+    const ph = (r.h - gap) / 2;
+    const frames = tiles[0].width;
+    const start = p * (frames - WINDOW);
+    ctx.imageSmoothingEnabled = false;
+    tiles.forEach((tile, i) => ctx.drawImage(tile, start, 0, WINDOW, K, r.x, r.y + i * (ph + gap), r.w, ph));
+
+    // one tick per second under each panel, travelling with the window
+    ctx.strokeStyle = css(wash, 0.6);
+    ctx.lineWidth = 1;
+    for (let f = Math.ceil(start / RATE) * RATE; f <= start + WINDOW; f += RATE) {
+      const x = r.x + ((f - start) / WINDOW) * r.w;
+      for (let i = 0; i < 2; i++) {
+        const y = r.y + i * (ph + gap) + ph;
+        ctx.beginPath();
+        ctx.moveTo(x, y + 3);
+        ctx.lineTo(x, y + (f % (5 * RATE) ? 7 : 11));
+        ctx.stroke();
+      }
+    }
+    // where this window sits in the whole recording
+    const y = r.y + r.h + 22;
+    ctx.fillStyle = css(wash, 0.3);
+    ctx.fillRect(r.x, y, r.w, 2);
+    ctx.fillStyle = css(bloom, 0.9);
+    ctx.fillRect(r.x + (start / frames) * r.w, y, (WINDOW / frames) * r.w, 2);
+
+    const ink = css(bloom, 0.75);
+    label(ctx, "empty", r.x, r.y - 12, ink);
+    label(ctx, "moving", r.x, r.y + ph + gap - 12, ink);
+    label(ctx, "subcarrier", r.x - 12, r.y + r.h / 2, ink, "center", true);
+    label(ctx, "time", r.x + r.w, y + 16, ink, "right");
+  });
+</script>

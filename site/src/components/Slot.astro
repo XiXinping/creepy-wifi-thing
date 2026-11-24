@@ -1,0 +1,16 @@
+---
+// A text slot: optional heading + paragraph (+ children). Copy is written by the authors; lorem until then.
+interface Props {
+  title?: string;
+  body: string;
+  class?: string;
+  [attr: `data-${string}`]: string | number;
+}
+const { title, body, class: cls, ...attrs } = Astro.props;
+---
+
+<div class:list={["slot", cls]} {...attrs}>
+  {title && <h2>{title}</h2>}
+  <p>{body}</p>
+  <slot />
+</div>

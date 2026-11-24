@@ -26,3 +26,12 @@ rustc-ice-*.txt
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# website: GrabCAD model is not ours to redistribute; renders in site/public are committed
+seeed-studio-xiao-esp32-c5-*.zip
+site/tools/blender/assets/
+site/tools/.venv/
+site/node_modules/
+site/dist/
+site/.astro/
+__pycache__/

@@ -1,0 +1,494 @@
+---
+import Slot from "../Slot.astro";
+import { frames, rise } from "../../lib/renders";
+
+// [from, to] of each chapter's text, as fractions of the stage's scroll track
+const chapters = [
+  [0, 0.14, "Lorem ipsum dolor", "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus, posuere velit aliquet. Cras mattis consectetur purus sit amet fermentum. Donec ullamcorper nulla non metus auctor fringilla."],
+  [0.14, 0.23, "Sit amet consectetur", "Maecenas faucibus mollis interdum. Nullam quis risus eget urna mollis ornare vel eu leo. Vivamus sagittis lacus vel augue laoreet rutrum faucibus dolor auctor. Aenean lacinia bibendum nulla sed consectetur, praesent commodo cursus magna."],
+  [0.23, 0.51, "Adipiscing elit sed", "Etiam porta sem malesuada magna mollis euismod. Fusce dapibus, tellus ac cursus commodo, tortor mauris condimentum nibh, ut fermentum massa justo sit amet risus. Duis mollis, est non commodo luctus, nisi erat porttitor ligula."],
+  [0.51, 0.63, "Do eiusmod tempor", "Curabitur blandit tempus porttitor. Morbi leo risus, porta ac consectetur ac, vestibulum at eros. Sed posuere consectetur est at lobortis. Nulla vitae elit libero, a pharetra augue. Donec sed odio dui, cras justo odio."],
+  [0.63, 0.88, "Incididunt ut labore", "Vestibulum id ligula porta felis euismod semper. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec id elit non mi porta gravida at eget metus. Nullam id dolor id nibh ultricies vehicula ut id elit."],
+  [0.88, 1.01, "Et dolore magna", "Aenean eu leo quam. Pellentesque ornare sem lacinia quam venenatis vestibulum. Integer posuere erat a ante venenatis dapibus posuere velit aliquet. Morbi leo risus, porta ac consectetur ac, vestibulum at eros, sed posuere est."],
+] as const;
+---
+
+<section class="pin physics" id="physics" data-frames={JSON.stringify(frames("rise"))} data-rise={JSON.stringify(rise())}>
+  <div class="stage">
+    <canvas class="photo" aria-hidden="true"></canvas>
+    <canvas class="field" aria-hidden="true"></canvas>
+    <canvas class="ink" aria-hidden="true"></canvas>
+    {chapters.map(([from, to, title, body]) => <Slot class="chapter" data-from={from} data-to={to} title={title} body={body} />)}
+  </div>
+</section>
+
+<style>
+  /* overlaps the hero's last screen so rise frame 0 replaces hero's identical last frame in place */
+  .physics {
+    height: 1000vh;
+    margin-top: -100vh;
+    margin-top: -100svh; /* must equal the stage height or the hand-off frame jumps */
+    z-index: 1;
+  }
+
+  .stage {
+    visibility: hidden;
+  }
+
+  .field {
+    mix-blend-mode: screen;
+  }
+
+  .stage :global(.chapter) {
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+
+  .stage :global(.chapter.on) {
+    opacity: 1;
+  }
+
+  @media (orientation: landscape) {
+    .stage :global(.chapter) {
+      top: 9vh;
+    }
+  }
+</style>
+
+
+<script>
+  import { css, mix, token, type RGB } from "../../lib/color";
+  import { loadCsi } from "../../lib/data";
+  import { FIELD, MAX_SOURCES } from "../../lib/field";
+  import { quad } from "../../lib/gl";
+  import { LAMBDA, SUBCARRIERS, csiAmplitude, dist, fresnelZone, imageSources, type Path, type Vec } from "../../lib/physics";
+  import { fromDevice, heroFit, lerpRect, roomFit, toScreen, type Rect, type Rise } from "../../lib/room";
+  import { clamp01, onFrame, progress, reduced, seg } from "../../lib/scroll";
+  import { sequence } from "../../lib/sequence";
+  import { label, portrait, sizeCanvas } from "../../lib/stage";
+
+  const root = document.getElementById("physics")!;
+  const stage = root.querySelector<HTMLElement>(".stage")!;
+  const photo = root.querySelector<HTMLCanvasElement>(".photo")!;
+  const fieldCanvas = root.querySelector<HTMLCanvasElement>(".field")!;
+  const ink = root.querySelector<HTMLCanvasElement>(".ink")!;
+  const slots = [...root.querySelectorAll<HTMLElement>(".chapter")];
+  const pctx = photo.getContext("2d")!;
+  const ctx = ink.getContext("2d")!;
+  const rise: Rise = JSON.parse(root.dataset.rise!);
+  const seq = sequence("rise", JSON.parse(root.dataset.frames!));
+  const [deep, wash, bloom, enig] = ["deep", "wash", "bloom", "enig"].map(token);
+
+  new IntersectionObserver(([e]) => e.isIntersecting && seq.load()).observe(root);
+
+  // Scroll timeline, as fractions of the track
+  type Span = readonly [number, number];
+  const T = {
+    rise: [0, 0.12],
+    glow: [0.11, 0.14],
+    los: [0.14, 0.18], // free-space wave fills the screen
+    strip: [0.18, 0.22],
+    walls: [0.24, 0.3], // walls close in; the field is clipped to the room
+    multi: [0.3, 0.5], // one reflection at a time: its ray draws in, then its wave joins
+    real: [0.54, 0.6],
+    fresnel: [0.64, 0.68],
+    bodyIn: [0.68, 0.7],
+    body: [0.7, 0.86],
+    profiles: [0.89, 0.94],
+  } satisfies Record<string, Span>;
+  const at = (p: number, [a, b]: Span) => seg(p, a, b);
+  const ease = (t: number) => t * t * (3 - 2 * t);
+
+  // --- physics -------------------------------------------------------------
+  const W = rise.room.w;
+  const H = rise.room.h;
+  const tx = { x: rise.tx[0], y: rise.tx[1] };
+  const rx = { x: rise.rx[0], y: rise.rx[1] };
+  const paths = imageSources(tx, W, H, 2);
+  const OMEGA = 2 * Math.PI * 1.2; // display rate of the travelling wave, rad/s
+
+  /** The straight line image→rx folded back into the room at every wall it crosses is the real bounce path. */
+  const fold = (v: number, L: number) => L - Math.abs((((v % (2 * L)) + 2 * L) % (2 * L)) - L);
+  function bounces(src: Vec): Vec[] {
+    const ts = [0, 1];
+    for (const [a, b, L] of [[src.x, rx.x, W], [src.y, rx.y, H]]) {
+      if (a === b) continue;
+      for (let m = Math.ceil(Math.min(a, b) / L); m * L < Math.max(a, b); m++) ts.push((m * L - a) / (b - a));
+    }
+    return ts.sort((u, v) => u - v).map((t) => ({ x: fold(src.x + (rx.x - src.x) * t, W), y: fold(src.y + (rx.y - src.y) * t, H) }));
+  }
+  const rays = paths.map((p) => bounces(p.src));
+
+  /** The first fraction q (by length) of a polyline. */
+  function partial(pts: Vec[], q: number): Vec[] {
+    const lens = pts.slice(1).map((b, i) => dist(pts[i], b));
+    let left = q * lens.reduce((a, b) => a + b, 0);
+    const out = [pts[0]];
+    for (let i = 0; i < lens.length; i++) {
+      const f = Math.min(1, left / lens[i]);
+      out.push({ x: pts[i].x + (pts[i + 1].x - pts[i].x) * f, y: pts[i].y + (pts[i + 1].y - pts[i].y) * f });
+      left -= lens[i];
+      if (left <= 0) break;
+    }
+    return out;
+  }
+
+  // body walks across the line of sight through its midpoint
+  const los = dist(tx, rx);
+  const mid = { x: (tx.x + rx.x) / 2, y: (tx.y + rx.y) / 2 };
+  const nrm = { x: -(rx.y - tx.y) / los, y: (rx.x - tx.x) / los };
+  const SWING = 1.2; // m either side
+  const BODY_R = 0.175;
+  const BODY_GAIN = 0.4;
+  const bodyAt = (t: number) => ({ x: mid.x + nrm.x * SWING * (1 - 2 * t), y: mid.y + nrm.y * SWING * (1 - 2 * t) });
+  /** The body's wave and its wall bounces as extra paths: each a virtual source on the line rx→(body image)
+   *  whose distance to rx is the full length tx→body→(walls)→rx. `wall` scales the bounced ones. */
+  function bodyPaths(b: Vec, wall: number): Path[] {
+    const d1 = dist(tx, b);
+    return imageSources(b, W, H, 2).map((q) => {
+      const d2 = dist(q.src, rx);
+      const f = (d1 + d2) / d2;
+      return { src: { x: rx.x + (q.src.x - rx.x) * f, y: rx.y + (q.src.y - rx.y) * f }, order: q.order + 1, gain: BODY_GAIN * q.gain * (q.order ? wall : 1) };
+    });
+  }
+  const TRACE_N = 400;
+  const TRACE_K = 1;
+  /** Bars for the paths weighted by how far each has faded in (weights 0..1). */
+  const weighted = (w: number[]) => paths.map((q, i) => ({ ...q, gain: q.gain * w[i] }));
+  // in the Fresnel chapter the wall reflections step back so the body's wave reads against line of sight;
+  // the trace uses the same mix the field shows
+  const WALL_REST = 0.5;
+  const trace = Array.from({ length: TRACE_N + 1 }, (_, i) =>
+    csiAmplitude(weighted(paths.map((_, j) => (j ? WALL_REST : 1))), rx, TRACE_K, bodyPaths(bodyAt(i / TRACE_N), WALL_REST)),
+  );
+  const [tLo, tHi] = [Math.min(...trace), Math.max(...trace)];
+
+  // Fresnel zone n boundary: ellipse with foci tx, rx and excess path nλ/2
+  const ZONES = Array.from({ length: 8 }, (_, i) => {
+    const a = (los + ((i + 1) * LAMBDA) / 2) / 2;
+    return { a, b: Math.sqrt(a * a - (los / 2) ** 2) };
+  });
+  const zoneOf = (t: number) => fresnelZone(bodyAt(t), tx, rx);
+  // trace samples where the body crosses a drawn zone boundary
+  const crossings = trace.flatMap((_, i) => (i && zoneOf(i / TRACE_N) !== zoneOf((i - 1) / TRACE_N) && Math.min(zoneOf(i / TRACE_N), zoneOf((i - 1) / TRACE_N)) <= ZONES.length ? [i] : []));
+
+  const sim = (w: number[]) => SUBCARRIERS.map((k) => csiAmplitude(weighted(w), rx, k));
+  const simMax = Math.max(...sim(paths.map(() => 1))) * 1.15;
+  const losLevel = sim(paths.map((_, i) => +(i === 0)))[0] / simMax;
+  let profiles: Record<string, number[]> | null = null;
+  loadCsi().then(({ meta }) => (profiles = meta.profiles));
+
+  // --- field (WebGL) -------------------------------------------------------
+  const src = new Float32Array(MAX_SOURCES * 3);
+  paths.forEach((q, i) => src.set([q.src.x, q.src.y, q.gain], i * 3));
+  let field: ReturnType<typeof quad> = null;
+  try {
+    field = quad(fieldCanvas, FIELD);
+  } catch (e) {
+    console.warn(e);
+  }
+  if (field) {
+    const { gl, loc } = field;
+    gl.uniform1i(loc("uN"), paths.length);
+    gl.uniform1f(loc("uK"), (2 * Math.PI) / LAMBDA);
+    gl.uniform1f(loc("uStatic"), reduced ? 1 : 0);
+    gl.uniform3f(loc("uWash"), ...(wash.map((c) => c / 255) as RGB));
+    gl.uniform3f(loc("uBloom"), ...(bloom.map((c) => c / 255) as RGB));
+  }
+
+  // --- 2D ink --------------------------------------------------------------
+  function glow(c: Vec, r: number, color: RGB, a: number) {
+    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r);
+    g.addColorStop(0, css(color, a));
+    g.addColorStop(0.2, css(color, a * 0.5));
+    g.addColorStop(1, css(color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, r, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  function polyline(pts: Vec[]) {
+    ctx.beginPath();
+    pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+  }
+
+  function line(x0: number, y0: number, x1: number, y1: number) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+
+  // --- rolling ball (top-down, light from the upper left) -------------------
+  type V3 = [number, number, number];
+  const unit = (v: V3): V3 => { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; };
+  // surface markings in the ball's own frame: one tilted seam (great circle) and a few spots
+  const SEAM: V3[] = Array.from({ length: 73 }, (_, i) => {
+    const t = (i / 72) * 2 * Math.PI;
+    return unit([Math.cos(t), Math.sin(t) * 0.5, Math.sin(t) * 0.87]);
+  });
+  const SPOTS: V3[] = [unit([0.3, -0.8, 0.5]), unit([-0.6, 0.2, -0.7]), unit([0.7, 0.5, -0.4]), unit([-0.2, 0.6, 0.8])];
+  /** Rotate p about the horizontal axis perpendicular to travel u by theta; positive theta moves the top forward. */
+  function roll(p: V3, u: Vec, theta: number): V3 {
+    const a: V3 = [-u.y, u.x, 0];
+    const c = Math.cos(theta), sn = Math.sin(theta);
+    const axp: V3 = [a[1] * p[2] - a[2] * p[1], a[2] * p[0] - a[0] * p[2], a[0] * p[1] - a[1] * p[0]];
+    const d = a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
+    return [0, 1, 2].map((i) => p[i] * c + axp[i] * sn + a[i] * d * (1 - c)) as V3;
+  }
+
+  function ball(c: Vec, R: number, u: Vec, theta: number, a: number) {
+    // contact shadow, offset away from the light
+    const sh = ctx.createRadialGradient(c.x + R * 0.3, c.y + R * 0.35, R * 0.2, c.x + R * 0.3, c.y + R * 0.35, R * 1.35);
+    sh.addColorStop(0, css(deep, 0.75 * a));
+    sh.addColorStop(1, css(deep, 0));
+    ctx.fillStyle = sh;
+    ctx.beginPath();
+    ctx.arc(c.x + R * 0.3, c.y + R * 0.35, R * 1.35, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // body: lit gold falling off to a dark limb
+    const lx = c.x - R * 0.35, ly = c.y - R * 0.4;
+    const g = ctx.createRadialGradient(lx, ly, R * 0.05, c.x, c.y, R);
+    g.addColorStop(0, css(mix(enig, bloom, 0.35), a));
+    g.addColorStop(0.45, css(enig, a));
+    g.addColorStop(0.85, css(mix(enig, deep, 0.55), a));
+    g.addColorStop(1, css(mix(enig, deep, 0.75), a));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, R, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // markings that turn with the roll; only the hemisphere facing the camera (z > 0) shows,
+    // fading toward the limb where it foreshortens
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, R, 0, 2 * Math.PI);
+    ctx.clip();
+    const pts = SEAM.map((q) => roll(q, u, theta));
+    ctx.lineWidth = Math.max(1, R * 0.07);
+    ctx.lineCap = "round";
+    for (let i = 1; i < pts.length; i++) {
+      const [p0, p1] = [pts[i - 1], pts[i]];
+      const z = Math.min(p0[2], p1[2]);
+      if (z <= 0) continue;
+      ctx.strokeStyle = css(mix(enig, deep, 0.6), a * Math.min(1, z * 2.5));
+      line(c.x + p0[0] * R, c.y + p0[1] * R, c.x + p1[0] * R, c.y + p1[1] * R);
+    }
+    for (const q of SPOTS.map((q) => roll(q, u, theta))) {
+      if (q[2] <= 0) continue;
+      ctx.fillStyle = css(mix(enig, deep, 0.6), a * Math.min(1, q[2] * 2.5));
+      ctx.beginPath();
+      // a round spot seen at an angle: squashed along the direction it faces away
+      const r = R * 0.13, ang = Math.atan2(q[1], q[0]);
+      ctx.ellipse(c.x + q[0] * R, c.y + q[1] * R, r * Math.max(0.15, q[2]), r, ang, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // specular highlight and a cool rim from the room on the shadow side
+    glow({ x: lx, y: ly }, R * 0.35, bloom, 0.85 * a);
+    ctx.lineWidth = Math.max(1, R * 0.06);
+    ctx.strokeStyle = css(wash, 0.5 * a);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, R - ctx.lineWidth / 2, Math.PI * 0.05, Math.PI * 0.7);
+    ctx.stroke();
+  }
+
+  onFrame((time) => {
+    const { p, visible, pinned } = progress(root);
+    stage.style.visibility = pinned ? "visible" : "hidden";
+    if (!visible || !pinned) return;
+    for (const s of slots) s.classList.toggle("on", p >= +s.dataset.from! && p < +s.dataset.to!);
+
+    // photo: rise frames, easing from the hero's framing to the plan-view framing
+    const { w, h, dpr } = sizeCanvas(photo);
+    // portrait: subcarrier panel on top, room under it, text at the bottom
+    const stripH = Math.min(56, h * 0.08);
+    const room = roomFit(rise, w, h, h * 0.04 + stripH + (portrait(w, h) ? 28 : 8)); // portrait: room for the panel's axis label
+    const pr = at(p, T.rise);
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // lift starts once the board is too small for its black soldermask to turn blue
+    seq.draw(pctx, pr, lerpRect(heroFit(w, h), room, ease(pr)), deep, ease(clamp01((pr - 0.15) / 0.35)));
+    const { at: S, s } = toScreen(rise, room);
+
+    // reflections: each ray draws in over the first half of its slot; once it lands its wave fades
+    // in over the next 0.8 slot, overlapping the next ray, so the pattern morphs instead of snapping
+    const FADE = 0.8;
+    const multi = at(p, T.multi) * (paths.length - 1 + FADE - 0.5);
+    const drawn = paths.map((_, i) => (i ? clamp01((multi - (i - 1)) / 0.5) : at(p, T.los)));
+    const fresnel = at(p, T.fresnel);
+    const wall = 1 - (1 - WALL_REST) * fresnel;
+    const weight = paths.map((_, i) => (i ? ease(clamp01((multi - (i - 1) - 0.5) / FADE)) * wall : 1));
+
+    // free space fills the screen, then the walls close in to the room
+    const walls = ease(at(p, T.walls));
+    const screen = [rise.frame.x0 - room.x / s, rise.frame.y1 - (h - room.y) / s, rise.frame.x0 + (w - room.x) / s, rise.frame.y1 + room.y / s];
+    const clip = screen.map((v, i) => v + ([0, 0, W, H][i] - v) * walls);
+
+    const bt = at(p, T.body);
+    const bodyOn = at(p, T.bodyIn) * (1 - at(p, T.profiles));
+
+    // field
+    const gain = at(p, T.los) * (1 - 0.45 * fresnel) * (1 - 0.45 * bodyOn); // dims further while the ball rolls so it and the zones read
+    fieldCanvas.style.opacity = gain > 0 ? "1" : "0";
+    if (field && gain > 0) {
+      const { gl, loc } = field;
+      const g = sizeCanvas(fieldCanvas, 1.5);
+      gl.uniform4f(loc("uMap"), ...fromDevice(rise, room, g.dpr, fieldCanvas.height));
+      gl.uniform4f(loc("uClip"), clip[0], clip[1], clip[2], clip[3]);
+      gl.uniform3fv(loc("uSrc"), src.map((v, j) => (j % 3 === 2 ? v * (weight[(j / 3) | 0] ?? 0) : v)));
+      gl.uniform1f(loc("uPhase"), reduced ? 0 : time * OMEGA);
+      gl.uniform1f(loc("uNorm"), 0.9 / Math.hypot(...paths.map((q, i) => q.gain * weight[i])));
+      gl.uniform1f(loc("uGain"), gain);
+      // the body scatters the direct wave: sources at the body and its wall images, delayed by the tx→body
+      // leg, so at rx their phases match bodyPaths and the field agrees with the trace below
+      const b = bodyAt(bt);
+      const d1 = dist(tx, b);
+      const amp = (BODY_GAIN * bodyOn) / Math.sqrt(d1);
+      gl.uniform3fv(loc("uScat"), imageSources(b, W, H, 2).flatMap((q) => [q.src.x, q.src.y, amp * q.gain * (q.order ? wall : 1)]));
+      gl.uniform1f(loc("uScatLag"), ((2 * Math.PI) / LAMBDA) * d1);
+      field.draw();
+    }
+
+    // ink
+    const c = sizeCanvas(ink);
+    ctx.setTransform(c.dpr, 0, 0, c.dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    if (walls > 0) {
+      const a = S({ x: clip[0], y: clip[1] });
+      const b = S({ x: clip[2], y: clip[3] });
+      ctx.strokeStyle = css(wash, Math.min(1, walls * 3));
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(a.x, b.y, b.x - a.x, a.y - b.y);
+    }
+
+    const rayFade = 1 - 0.6 * fresnel;
+    ctx.lineCap = "round";
+    drawn.forEach((q, i) => {
+      if (q <= 0) return;
+      const pts = partial(rays[i].map(S), q);
+      ctx.lineWidth = q < 1 ? 2 : 1.25;
+      ctx.strokeStyle = css(bloom, (q < 1 ? 0.95 : 0.3 + 0.35 * paths[i].gain) * rayFade);
+      polyline(pts);
+      ctx.stroke();
+      // wall hits
+      for (const v of pts.slice(1, -1)) glow(v, 7, bloom, 0.8 * rayFade);
+      if (q < 1) glow(pts[pts.length - 1], 14, bloom, 1);
+    });
+
+    if (fresnel > 0) {
+      const cm = S(mid);
+      const rot = -Math.atan2(rx.y - tx.y, rx.x - tx.x);
+      const z = at(p, T.bodyIn) > 0 ? zoneOf(at(p, T.body)) : 0;
+      ZONES.forEach(({ a, b }, i) => {
+        // the two boundaries of the zone the body is in light up
+        const lit = i === z - 1 || i === z - 2;
+        ctx.lineWidth = lit ? 1.75 : 1;
+        ctx.strokeStyle = lit ? css(bloom, 0.95) : css(wash, i ? 0.45 : 0.9);
+        ctx.beginPath();
+        ctx.ellipse(cm.x, cm.y, a * s, b * s, rot, 0, 2 * Math.PI * fresnel);
+        ctx.stroke();
+      });
+    }
+
+    const lit = at(p, T.glow);
+    for (const q of [tx, rx]) glow(S(q), s * 0.3, bloom, 0.9 * lit);
+
+    if (bodyOn > 0) {
+      const b = S(bodyAt(bt));
+      const ahead = S(bodyAt(bt + 0.01));
+      const len = Math.hypot(ahead.x - b.x, ahead.y - b.y) || 1;
+      glow(b, BODY_R * s * 2.2, enig, 0.35 * bodyOn);
+      // rolled without slipping: angle = distance travelled / radius
+      ball(b, BODY_R * s, { x: (ahead.x - b.x) / len, y: (ahead.y - b.y) / len }, (2 * SWING * bt) / BODY_R, bodyOn);
+    }
+
+    // bottom panel: subcarrier bars → body trace → real empty vs still profiles
+    const left = S({ x: 0, y: 0 }).x;
+    const right = S({ x: W, y: H }).x;
+    const panel: Rect = portrait(w, h)
+      ? { x: left, y: h * 0.04, w: right - left, h: stripH }
+      : { x: w * 0.45, y: Math.min(h * 0.93, S({ x: 0, y: 0 }).y - 32) - h * 0.13, w: Math.min(w * 0.95, right) - w * 0.45, h: h * 0.13 };
+    const bars = at(p, T.strip) * (1 - fresnel);
+    const traceOn = fresnel * (1 - at(p, T.profiles));
+    const prof = profiles ? at(p, T.profiles) : 0;
+    const PY = (v: number) => panel.y + panel.h * (1 - v);
+    const axes = (x: string, y: string, a: number) => {
+      label(ctx, x, panel.x + panel.w / 2, panel.y + panel.h + 12, css(bloom, 0.75 * a), "center");
+      label(ctx, y, panel.x - 12, panel.y + panel.h / 2, css(bloom, 0.75 * a), "center", true);
+    };
+
+    if (bars > 0) {
+      const real = profiles?.empty;
+      const rm = real ? Math.max(...real) * 1.15 : 1;
+      const m = real ? at(p, T.real) : 0;
+      const bw = panel.w / 57;
+      const now = sim(weight);
+      SUBCARRIERS.forEach((k, i) => {
+        const v = now[i] / simMax + ((real ? real[i] / rm : 0) - now[i] / simMax) * m;
+        // brighter where the channel has faded or peaked away from the flat line-of-sight level
+        const dev = Math.min(1, (Math.abs(v - losLevel) / losLevel) * 2 * (1 - m));
+        ctx.fillStyle = css(m < 0.5 ? mix(wash, bloom, dev) : bloom, 0.9 * bars);
+        const x = panel.x + (k + 28) * bw;
+        ctx.fillRect(x + bw * 0.2, PY(v), bw * 0.6, panel.h * v);
+      });
+      // the flat level line of sight alone would give
+      ctx.setLineDash([4, 5]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = css(bloom, 0.8 * bars * (1 - m));
+      line(panel.x, PY(losLevel), panel.x + panel.w, PY(losLevel));
+      ctx.setLineDash([]);
+      axes("subcarrier", "amplitude", bars);
+      label(ctx, "line of sight only", panel.x + panel.w, PY(losLevel) - 10, css(bloom, 0.8 * bars * (1 - m)), "right");
+      label(ctx, "simulated", panel.x, panel.y - 10, css(bloom, 0.75 * bars * (1 - m)));
+      label(ctx, "measured, empty room", panel.x, panel.y - 10, css(bloom, 0.75 * bars * m));
+    }
+
+    if (traceOn > 0) {
+      const upto = Math.round(bt * TRACE_N);
+      const X = (i: number) => panel.x + (i / TRACE_N) * panel.w;
+      const Y = (v: number) => PY((v - tLo) / (tHi - tLo));
+      ctx.lineWidth = 1;
+      for (const i of crossings) {
+        ctx.strokeStyle = css(wash, (i <= upto ? 0.55 : 0.2) * traceOn);
+        line(X(i), panel.y, X(i), panel.y + panel.h);
+      }
+      ctx.strokeStyle = css(bloom, 0.95 * traceOn);
+      ctx.lineWidth = 1.75;
+      polyline(trace.slice(0, upto + 1).map((v, i) => ({ x: X(i), y: Y(v) })));
+      ctx.stroke();
+      if (bodyOn > 0) glow({ x: X(upto), y: Y(trace[upto]) }, 12, enig, bodyOn);
+      axes("ball position", "amplitude", traceOn);
+    }
+
+    if (prof > 0 && profiles) {
+      const { empty, still } = profiles;
+      const all = [...empty, ...still];
+      const [lo, hi] = [Math.min(...all), Math.max(...all)];
+      const pt = (v: number, i: number) => ({ x: panel.x + ((SUBCARRIERS[i] + 28) / 56) * panel.w, y: PY((v - lo) / (hi - lo)) });
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(panel.x - 4, panel.y - 8, panel.w * prof + 8, panel.h + 16);
+      ctx.clip();
+      // the gap between the empty room and the room with someone standing still
+      polyline([...empty.map(pt), ...still.map(pt).reverse()]);
+      ctx.fillStyle = css(enig, 0.22);
+      ctx.fill();
+      ctx.lineWidth = 1.75;
+      for (const [vals, color] of [[empty, bloom], [still, enig]] as const) {
+        ctx.strokeStyle = css(color, 0.95);
+        polyline(vals.map(pt));
+        ctx.stroke();
+      }
+      ctx.restore();
+      axes("subcarrier", "mean amplitude", prof);
+      // series names at the left end, the higher line's above it and the lower's below
+      const [e0, s0] = [pt(empty[0], 0).y, pt(still[0], 0).y];
+      label(ctx, "empty", panel.x, e0 + (e0 < s0 ? -12 : 12), css(bloom, prof));
+      label(ctx, "standing still", panel.x, s0 + (s0 <= e0 ? -12 : 12), css(enig, prof));
+    }
+  });
+</script>

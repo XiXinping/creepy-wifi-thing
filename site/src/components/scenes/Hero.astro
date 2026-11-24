@@ -1,0 +1,81 @@
+---
+import Slot from "../Slot.astro";
+import { frames } from "../../lib/renders";
+---
+
+<section class="pin hero" id="hero" data-frames={JSON.stringify(frames("hero"))}>
+  <div class="stage">
+    <h1>Lorem ipsum</h1>
+    <canvas aria-hidden="true"></canvas>
+    <Slot
+      class="lede"
+      body="Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+    />
+  </div>
+</section>
+
+<style>
+  .hero {
+    height: 250vh;
+  }
+
+  h1 {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    padding: 0 var(--gutter);
+    font-size: clamp(4.5rem, 19vw, 21rem);
+    font-weight: 400;
+    line-height: 0.82;
+    letter-spacing: -0.02em;
+    color: var(--wash);
+  }
+
+  /* opaque frames: lighten lets the type show through the dark floor and PCB, hidden by the bright board */
+  canvas {
+    mix-blend-mode: lighten;
+  }
+
+  @media (orientation: portrait) {
+    h1 {
+      align-content: start;
+      padding-top: 12svh;
+      font-size: 27vw;
+    }
+  }
+
+  @media (orientation: landscape) {
+    .hero :global(.lede) {
+      bottom: 9vh;
+    }
+  }
+</style>
+
+<script>
+  import { token } from "../../lib/color";
+  import { heroFit } from "../../lib/room";
+  import { onFrame, progress, seg } from "../../lib/scroll";
+  import { sequence } from "../../lib/sequence";
+  import { sizeCanvas } from "../../lib/stage";
+
+  const root = document.getElementById("hero")!;
+  const canvas = root.querySelector("canvas")!;
+  const ctx = canvas.getContext("2d")!;
+  const fading = root.querySelectorAll<HTMLElement>("h1, .slot");
+  const seq = sequence("hero", JSON.parse(root.dataset.frames!));
+  const deep = token("deep");
+  seq.load();
+
+  onFrame(() => {
+    const { p, visible } = progress(root);
+    if (!visible) return;
+    const { w, h, dpr } = sizeCanvas(canvas);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    seq.draw(ctx, p, heroFit(w, h), deep);
+    // type leaves before the hand-off to the rise sequence, which starts on this exact frame
+    const o = String(1 - seg(p, 0.7, 0.95));
+    fading.forEach((el) => (el.style.opacity = o));
+  });
+</script>
