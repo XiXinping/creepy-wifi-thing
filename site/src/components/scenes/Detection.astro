@@ -8,7 +8,7 @@ import Slot from "../Slot.astro";
     <Slot
       class="side"
       title="Sensing motion in real-time"
-      body="We can assign a score to how likely it is that an object is moving based on factors like the change in amplitude. Past an empirical threshold, we consider the evidence strong enough to assert that something is moving. Our work lies in devising an accurate metric and sensible decision boundary, whether through rolling variance or black-box neural nets."
+      body="We can assign a score to how likely an object is moving based on factors such as the change in amplitude. Past a threshold, we consider the evidence strong enough to assert that something is moving. Our work lies in devising an accurate metric and sensible decision boundary, whether through rolling variance or black-box neural nets."
     />
   </div>
 </section>
@@ -55,7 +55,13 @@ import Slot from "../Slot.astro";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const r = panelRect(w, h, slot.getBoundingClientRect().top - canvas.getBoundingClientRect().top - 48); // labels below the panel clear the copy
+    const r = panelRect(
+      w,
+      h,
+      slot.getBoundingClientRect().top -
+        canvas.getBoundingClientRect().top -
+        48,
+    ); // labels below the panel clear the copy
     const lo = Math.min(...series);
     const hi = Math.max(...series);
     const X = (i: number) => r.x + (i / (series.length - 1)) * r.w;
