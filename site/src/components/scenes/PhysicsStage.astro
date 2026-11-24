@@ -134,7 +134,7 @@ const chapters = [
   } from "../../lib/room";
   import { clamp01, onFrame, progress, reduced, seg } from "../../lib/scroll";
   import { sequence } from "../../lib/sequence";
-  import { label, portrait, sizeCanvas } from "../../lib/stage";
+  import { GUTTER_L, label, portrait, sizeCanvas } from "../../lib/stage";
 
   const root = document.getElementById("physics")!;
   const stage = root.querySelector<HTMLElement>(".stage")!;
@@ -661,7 +661,7 @@ const chapters = [
     const left = S({ x: 0, y: 0 }).x;
     const right = S({ x: W, y: H }).x;
     const panel: Rect = portrait(w, h)
-      ? { x: left, y: h * 0.04, w: right - left, h: stripH }
+      ? { x: Math.max(left, GUTTER_L), y: h * 0.04, w: Math.min(right, w - 16) - Math.max(left, GUTTER_L), h: stripH }
       : {
           x: w * 0.45,
           y: Math.min(h * 0.93, S({ x: 0, y: 0 }).y - 32) - h * 0.13,

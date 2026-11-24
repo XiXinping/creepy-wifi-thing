@@ -8,7 +8,7 @@ import Slot from "../Slot.astro";
     <Slot
       class="side"
       title="Measuring deviations"
-      body="As objects move between Fresnel zones, the amplitude changes rapidly across many frequencies. We can take a rolling average of recent amplitudes, comparing new samples as they come in. We've marked outliers in gold, which represent sudden spikes."
+      body="As objects move between Fresnel zones, the amplitude changes rapidly across many frequencies. We can take the variance over a rolling window, comparing new samples as they come in. We've marked outliers in gold, which represent sudden spikes."
     />
   </div>
 </section>
@@ -27,6 +27,7 @@ import Slot from "../Slot.astro";
 
   const root = document.getElementById("motion")!;
   const canvas = root.querySelector("canvas")!;
+  const slot = root.querySelector<HTMLElement>(".slot")!;
   const ctx = canvas.getContext("2d")!;
   const [deep, wash, bloom, enig] = ["deep", "wash", "bloom", "enig"].map(
     token,
@@ -84,7 +85,7 @@ import Slot from "../Slot.astro";
     last = key;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const r = panelRect(w, h);
+    const r = panelRect(w, h, slot.getBoundingClientRect().top - canvas.getBoundingClientRect().top - 36); // labels below the panel clear the copy
     const gap = Math.max(r.h * 0.08, 36); // ticks under the top panel, then the bottom panel's name
     const ph = (r.h - gap) / 2;
     const frames = tiles[0].width;

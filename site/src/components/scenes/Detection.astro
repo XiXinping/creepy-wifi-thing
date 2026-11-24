@@ -27,6 +27,7 @@ import Slot from "../Slot.astro";
 
   const root = document.getElementById("detection")!;
   const canvas = root.querySelector("canvas")!;
+  const slot = root.querySelector<HTMLElement>(".slot")!;
   const ctx = canvas.getContext("2d")!;
   const [wash, bloom, enig] = ["wash", "bloom", "enig"].map(token);
 
@@ -54,7 +55,7 @@ import Slot from "../Slot.astro";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const r = panelRect(w, h);
+    const r = panelRect(w, h, slot.getBoundingClientRect().top - canvas.getBoundingClientRect().top - 48); // labels below the panel clear the copy
     const lo = Math.min(...series);
     const hi = Math.max(...series);
     const X = (i: number) => r.x + (i / (series.length - 1)) * r.w;

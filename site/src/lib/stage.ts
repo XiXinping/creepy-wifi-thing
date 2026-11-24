@@ -18,9 +18,12 @@ export function sizeCanvas(c: HTMLCanvasElement, maxDpr = 2) {
 
 export const portrait = (w: number, h: number) => h > w;
 
-/** Where a data panel sits on a quiet stage: right of the text column, or above the bottom text on portrait. */
-export const panelRect = (w: number, h: number): Rect =>
-  portrait(w, h) ? { x: 16, y: h * 0.07, w: w - 32, h: h * 0.42 } : { x: w * 0.45, y: h * 0.14, w: w * 0.5, h: h * 0.72 };
+/** Portrait left margin: room for a vertical axis label centred 12px left of the panel. */
+export const GUTTER_L = 36;
+
+/** Where a data panel sits on a quiet stage: right of the text column, or above the bottom text on portrait (ending by `floor`). */
+export const panelRect = (w: number, h: number, floor = Infinity): Rect =>
+  portrait(w, h) ? { x: GUTTER_L, y: h * 0.07, w: w - GUTTER_L - 16, h: Math.min(h * 0.36, floor - h * 0.07) } : { x: w * 0.45, y: h * 0.14, w: w * 0.5, h: h * 0.72 };
 
 let font = "";
 let halo = "";
