@@ -32,13 +32,13 @@ const chapters = [
     0.63,
     0.88,
     "Detecting motion",
-    "As objects move, they block old paths and also reflect waves to create new paths from TX to RX. These waves can amplify the signal if they are in-phase with the line of sight. If they are out-of-phase, they cancel out with the line of sight, weakening the signal. Thus, the amplitude rapidly changes when objects travel between [Fresnel zones](https://en.wikipedia.org/wiki/Fresnel_zone), which mark boundaries between reflections that cause constructive and destructive interference.",
+    "A moving object reflects waves along a new path from TX to RX. These waves amplify the signal if they are in phase with the line of sight, and weaken it if they are out of phase. Thus, the amplitude rapidly changes when objects travel between [Fresnel zones](https://en.wikipedia.org/wiki/Fresnel_zone), which mark boundaries between reflections that cause constructive and destructive interference.",
   ],
   [
     0.88,
     1.01,
     "Finding objects",
-    "Even when objects are stationary, their mere presence changes the environment as they add and block reflection points.",
+    "Even when objects are stationary, their mere presence changes the environment: they block old paths and reflect waves along new ones. This shifts the room's fingerprint.",
   ],
 ] as const;
 ---
