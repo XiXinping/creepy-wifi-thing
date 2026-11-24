@@ -1,5 +1,6 @@
 {
-  "frames": 96,
+  "frames": 144,
+  "attach": 48,
   "room": {
     "w": 6.0,
     "h": 3.75
