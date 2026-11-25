@@ -737,7 +737,7 @@ const chapters = [
       );
       label(
         ctx,
-        "measured, empty room",
+        "actual, empty room",
         panel.x,
         panel.y - 10,
         css(bloom, 0.75 * bars * m),
@@ -809,6 +809,7 @@ const chapters = [
       }
       ctx.restore();
       axes("subcarrier", "mean amplitude", prof);
+      label(ctx, "actual", panel.x, panel.y - 10, css(bloom, 0.75 * prof));
       // series names at the left end, the higher line's above it and the lower's below
       const [e0, s0] = [pt(empty[0], 0).y, pt(still[0], 0).y];
       label(ctx, "empty", panel.x, e0 + (e0 < s0 ? -12 : 12), css(bloom, prof));
